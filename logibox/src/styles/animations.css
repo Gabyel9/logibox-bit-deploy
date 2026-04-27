@@ -1,0 +1,215 @@
+/* ── Page Enter ── */
+@keyframes fadeSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* ── Page Wrapper ── */
+.page-enter {
+  animation: fadeSlideUp 0.4s ease both;
+}
+
+/* ── Staggered Cards ── */
+.card-enter {
+  animation: fadeSlideUp 0.4s ease both;
+}
+.card-enter:nth-child(1) { animation-delay: 0.05s; }
+.card-enter:nth-child(2) { animation-delay: 0.1s; }
+.card-enter:nth-child(3) { animation-delay: 0.15s; }
+.card-enter:nth-child(4) { animation-delay: 0.2s; }
+
+/* ── Vault Cards ── */
+.vault-card-enter {
+  animation: fadeSlideUp 0.4s ease both;
+}
+.vault-card-enter:nth-child(1) { animation-delay: 0.05s; }
+.vault-card-enter:nth-child(2) { animation-delay: 0.1s; }
+.vault-card-enter:nth-child(3) { animation-delay: 0.15s; }
+
+/* ── Modal ── */
+.modal-overlay-enter {
+  animation: fadeIn 0.25s ease both;
+}
+.modal-content-enter {
+  animation: scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.mobile-sheet-enter {
+  animation: slideInLeft 0.3s ease both;
+}
+
+/* ── Sidebar ── */
+.sidebar-enter {
+  animation: slideInLeft 0.3s ease both;
+}
+
+/* ── Buttons ── */
+.btn-animate {
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background-color 0.2s ease, opacity 0.2s ease;
+}
+.btn-animate:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+.btn-animate:active {
+  transform: translateY(0px) scale(0.97);
+  box-shadow: none;
+}
+
+/* ── Nav Links ── */
+.nav-link-animate {
+  transition: background-color 0.2s ease, color 0.2s ease, transform 0.15s ease;
+}
+.nav-link-animate:hover {
+  transform: translateY(-1px);
+}
+
+/* ── Stat Cards ── */
+.stat-card-animate {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.stat-card-animate:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+}
+
+/* ── Vault Cards ── */
+.vault-card-animate {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.vault-card-animate:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.1);
+}
+
+/* ── Badge pulse for active OTP ── */
+.otp-active-pulse {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+/* ── Success message ── */
+.success-enter {
+  animation: slideDown 0.3s ease both;
+}
+
+/* ── Log items ── */
+.log-item-enter {
+  animation: slideInRight 0.35s ease both;
+}
+.log-item-enter:nth-child(1) { animation-delay: 0.02s; }
+.log-item-enter:nth-child(2) { animation-delay: 0.04s; }
+.log-item-enter:nth-child(3) { animation-delay: 0.06s; }
+.log-item-enter:nth-child(4) { animation-delay: 0.08s; }
+.log-item-enter:nth-child(5) { animation-delay: 0.1s; }
+
+/* ── FAQ accordion ── */
+.faq-answer {
+  overflow: hidden;
+  transition: max-height 0.35s ease, opacity 0.3s ease;
+}
+.faq-answer.open {
+  max-height: 400px;
+  opacity: 1;
+}
+.faq-answer.closed {
+  max-height: 0;
+  opacity: 0;
+}
+
+/* ── Loading shimmer ── */
+.shimmer {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 8px;
+}
+
+/* ── Input focus ── */
+.input-animate {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.input-animate:focus {
+  border-color: #9B0000;
+  box-shadow: 0 0 0 3px rgba(155, 0, 0, 0.1);
+  outline: none;
+}
+
+/* ── Toggle switch ── */
+.toggle-animate {
+  transition: background-color 0.25s ease;
+}
+.toggle-thumb {
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ── Filter buttons ── */
+.filter-btn-animate {
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+}
+.filter-btn-animate:hover {
+  transform: translateY(-1px);
+}
