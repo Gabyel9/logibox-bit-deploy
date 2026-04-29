@@ -2,9 +2,48 @@ import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
+function cleanError(message) {
+  if (!message) return 'Something went wrong. Please try again.';
+  if (message.includes('invalid-credential') || message.includes('wrong-password') || message.includes('user-not-found')) {
+    return 'Incorrect email or password. Please try again.';
+  }
+  if (message.includes('invalid-email')) {
+    return 'Please enter a valid email address.';
+  }
+  if (message.includes('too-many-requests')) {
+    return 'Too many failed attempts. Please wait a few minutes and try again.';
+  }
+  if (message.includes('network-request-failed')) {
+    return 'No internet connection. Please check your network.';
+  }
+  if (message.includes('popup-closed-by-user')) {
+    return 'Google sign-in was cancelled.';
+  }
+  if (message.includes('popup-blocked')) {
+    return 'Popup was blocked. Please allow popups and try again.';
+  }
+  return 'Something went wrong. Please try again.';
+}
+
+function EyeIcon({ visible }) {
+  return visible ? (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+      <circle cx="12" cy="12" r="3"/>
+    </svg>
+  ) : (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+      <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+      <line x1="1" y1="1" x2="23" y2="23"/>
+    </svg>
+  );
+}
+
 function SignIn() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState('');
@@ -19,7 +58,7 @@ function SignIn() {
       await signin(email, password);
       navigate('/dashboard');
     } catch (err) {
-      setError(err.message);
+      setError(cleanError(err.message));
     } finally {
       setLoading(false);
     }
@@ -32,7 +71,7 @@ function SignIn() {
       await googleSignIn();
       navigate('/dashboard');
     } catch (err) {
-      setError(err.message);
+      setError(cleanError(err.message));
     } finally {
       setGoogleLoading(false);
     }
@@ -53,8 +92,6 @@ function SignIn() {
         <h1 style={styles.title}>Welcome Back</h1>
         <p style={styles.subtitle}>Sign in to your account</p>
 
-        {error && <div style={styles.error}>{error}</div>}
-
         <form onSubmit={handleSubmit} style={styles.form}>
           <div style={styles.formGroup}>
             <label style={styles.label}>Email</label>
@@ -62,8 +99,11 @@ function SignIn() {
               className="input-animate"
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              style={styles.input}
+              onChange={(e) => { setEmail(e.target.value); setError(''); }}
+              style={{
+                ...styles.input,
+                borderColor: error ? '#ef4444' : '#d1d5db',
+              }}
               placeholder="Enter your email"
               required
             />
@@ -71,15 +111,39 @@ function SignIn() {
 
           <div style={styles.formGroup}>
             <label style={styles.label}>Password</label>
-            <input
-              className="input-animate"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              style={styles.input}
-              placeholder="Enter your password"
-              required
-            />
+            <div style={styles.passwordWrapper}>
+              <input
+                className="input-animate"
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => { setPassword(e.target.value); setError(''); }}
+                style={{
+                  ...styles.input,
+                  borderColor: error ? '#ef4444' : '#d1d5db',
+                }}
+                placeholder="Enter your password"
+                required
+              />
+              <button
+                type="button"
+                style={styles.eyeBtn}
+                onClick={() => setShowPassword(v => !v)}
+                tabIndex={-1}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                <EyeIcon visible={showPassword} />
+              </button>
+            </div>
+
+            {/* Error shows here — right below password */}
+            {error && (
+              <div style={styles.errorMsg}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="#dc2626" style={{ flexShrink: 0, marginTop: 1 }}>
+                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                </svg>
+                {error}
+              </div>
+            )}
           </div>
 
           <button
@@ -132,6 +196,7 @@ const styles = {
     justifyContent: 'center',
     background: 'linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%)',
     padding: '1rem',
+    boxSizing: 'border-box',
   },
   card: {
     backgroundColor: '#fff',
@@ -140,6 +205,7 @@ const styles = {
     boxShadow: '0 8px 32px rgba(0,0,0,0.08)',
     width: '100%',
     maxWidth: '400px',
+    boxSizing: 'border-box',
   },
   logoContainer: {
     marginBottom: '1rem',
@@ -157,21 +223,14 @@ const styles = {
     marginBottom: '0.5rem',
     fontSize: '1.75rem',
     fontWeight: 'bold',
+    marginTop: 0,
   },
   subtitle: {
     textAlign: 'center',
     color: '#6b7280',
     marginBottom: '1.5rem',
     fontSize: '1rem',
-  },
-  error: {
-    padding: '0.75rem',
-    backgroundColor: '#fee2e2',
-    border: '1px solid #ef4444',
-    borderRadius: '8px',
-    color: '#dc2626',
-    marginBottom: '1rem',
-    fontSize: '0.9rem',
+    marginTop: 0,
   },
   form: {
     display: 'flex',
@@ -188,13 +247,43 @@ const styles = {
     fontWeight: '600',
     color: '#374151',
   },
+  passwordWrapper: {
+    position: 'relative',
+    width: '100%',
+  },
   input: {
-    padding: '0.75rem',
+    width: '100%',
+    padding: '0.75rem 2.75rem 0.75rem 0.75rem',
     border: '1px solid #d1d5db',
     borderRadius: '12px',
     fontSize: '1rem',
+    boxSizing: 'border-box',
+    transition: 'border-color 0.2s ease',
+  },
+  eyeBtn: {
+    position: 'absolute',
+    right: '0.75rem',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    padding: '0.25rem',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  errorMsg: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '0.4rem',
+    color: '#dc2626',
+    fontSize: '0.8rem',
+    marginTop: '0.25rem',
+    lineHeight: '1.4',
   },
   submitBtn: {
+    width: '100%',
     padding: '0.875rem',
     backgroundColor: '#9B0000',
     color: '#fff',
@@ -203,7 +292,8 @@ const styles = {
     fontSize: '1rem',
     fontWeight: '600',
     cursor: 'pointer',
-    marginTop: '0.5rem',
+    marginTop: '0.25rem',
+    boxSizing: 'border-box',
   },
   divider: {
     display: 'flex',
@@ -237,6 +327,7 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
     gap: '0.75rem',
+    boxSizing: 'border-box',
   },
   googleIcon: {
     flexShrink: 0,
