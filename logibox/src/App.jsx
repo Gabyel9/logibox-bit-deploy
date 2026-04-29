@@ -12,29 +12,23 @@ import SignUp from './pages/SignUp';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
-
   if (loading) {
     return <div style={{ padding: '2rem', textAlign: 'center', color: '#7f8c8d' }}>Loading...</div>;
   }
-
   if (!user) {
-    return <Navigate to="/signin" />;
+    return <Navigate to="/" />;
   }
-
   return children;
 }
 
 function PublicRoute({ children }) {
   const { user, loading } = useAuth();
-
   if (loading) {
     return <div style={{ padding: '2rem', textAlign: 'center', color: '#7f8c8d' }}>Loading...</div>;
   }
-
   if (user) {
     return <Navigate to="/dashboard" />;
   }
-
   return children;
 }
 
