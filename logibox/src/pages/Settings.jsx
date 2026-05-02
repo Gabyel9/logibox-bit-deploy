@@ -27,7 +27,7 @@ function PasswordField({ label, value, onChange, placeholder }) {
   const [show, setShow] = useState(false);
   return (
     <div style={{ marginBottom: '1rem' }}>
-      <label style={styles.formLabel}>{label} <span style={{ color: '#9B0000' }}>*</span></label>
+      <label style={styles.formLabel}>{label} <span style={{ color: '#8B0000' }}>*</span></label>
       <div style={styles.passwordWrapper}>
         <input
           className="input-animate"
@@ -300,7 +300,7 @@ function Settings() {
                   </div>
                   <button
                     className="toggle-animate"
-                    style={{ ...styles.toggle, backgroundColor: vault.enabled ? '#9B0000' : '#d1d5db' }}
+                    style={{ ...styles.toggle, backgroundColor: vault.enabled ? '#8B0000' : '#d1d5db' }}
                     onClick={() => toggleVault(vault.id)}
                   >
                     <span className="toggle-thumb" style={{ ...styles.toggleKnob, transform: vault.enabled ? 'translateX(20px)' : 'translateX(0px)' }} />
@@ -409,23 +409,23 @@ function Settings() {
 }
 
 const styles = {
-  layout: { display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f5f6fa' },
+  layout: { display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f4f5f7', fontFamily: 'var(--font)' },
   main: { flex: 1, minWidth: 0 },
   content: { padding: '2rem', maxWidth: 800, margin: '0 auto' },
-  pageTitle: { fontSize: '1.75rem', fontWeight: 'bold', color: '#1f2937', marginBottom: '1.5rem', marginTop: 0 },
+  pageTitle: { fontSize: '1.75rem', fontWeight: 800, color: '#0f172a', marginBottom: '1.5rem', marginTop: 0, letterSpacing: '-0.4px', fontFamily: 'var(--font)' },
   section: { marginBottom: '2rem' },
-  sectionTitle: { fontSize: '1.1rem', fontWeight: '600', color: '#1f2937', marginBottom: '0.4rem' },
+  sectionTitle: { fontSize: '1.1rem', fontWeight: 700, color: '#1f2937', marginBottom: '0.4rem', letterSpacing: '-0.1px' },
   sectionHint: { fontSize: '0.82rem', color: '#6b7280', marginBottom: '0.75rem', marginTop: 0 },
-  card: { backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', padding: '1.5rem' },
+  card: { backgroundColor: '#fff', borderRadius: '14px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', padding: '1.5rem', border: '1px solid #f0f1f3' },
   formGroup: { marginBottom: '1rem' },
-  formLabel: { display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#374151', marginBottom: '0.5rem' },
+  formLabel: { display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', marginBottom: '0.5rem', letterSpacing: '0.01em' },
   formHint: { fontSize: '0.78rem', color: '#6b7280', marginTop: '-0.25rem', marginBottom: '0.5rem' },
-  formInput: { width: '100%', padding: '0.75rem', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '1rem', boxSizing: 'border-box' },
+  formInput: { width: '100%', padding: '0.75rem', border: '1.5px solid #e8eaed', borderRadius: '10px', fontSize: '1rem', boxSizing: 'border-box', backgroundColor: '#fafafa', fontFamily: 'var(--font)' },
   passwordWrapper: { position: 'relative', width: '100%' },
   eyeBtn: { position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '0.25rem', display: 'flex', alignItems: 'center' },
-  saveBtn: { padding: '0.75rem 1.25rem', backgroundColor: '#9B0000', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '0.95rem', fontWeight: '600', cursor: 'pointer', marginTop: '0.5rem' },
-  discardBtn: { flex: 1, padding: '0.75rem', backgroundColor: '#fff', color: '#374151', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '0.95rem', fontWeight: '500', cursor: 'pointer' },
-  applyBtn: { flex: 1, padding: '0.75rem', backgroundColor: '#9B0000', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '0.95rem', fontWeight: '600', cursor: 'pointer' },
+  saveBtn: { padding: '0.75rem 1.25rem', backgroundColor: '#8B0000', color: '#fff', border: 'none', borderRadius: '10px', fontSize: '0.875rem', fontWeight: 700, cursor: 'pointer', marginTop: '0.5rem', fontFamily: 'var(--font)' },
+  discardBtn: { flex: 1, padding: '0.75rem', backgroundColor: '#f4f5f7', color: '#374151', border: '1px solid #e8eaed', borderRadius: '10px', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' },
+  applyBtn: { flex: 1, padding: '0.75rem', backgroundColor: '#8B0000', color: '#fff', border: 'none', borderRadius: '10px', fontSize: '0.875rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font)' },
   successMsg: { display: 'block', color: '#22c55e', fontSize: '0.85rem', marginTop: '0.5rem', fontWeight: '500' },
   errorMsg: { display: 'block', color: '#ef4444', fontSize: '0.85rem', marginTop: '0.25rem', marginBottom: '0.5rem' },
   sliderContainer: { display: 'flex', alignItems: 'center', gap: '1rem' },

@@ -150,7 +150,8 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     minHeight: '100vh',
-    backgroundColor: '#f5f6fa',
+    backgroundColor: '#f4f5f7',
+    fontFamily: 'var(--font)',
   },
   main: {
     flex: 1,
@@ -163,8 +164,8 @@ const styles = {
   },
   pageTitle: {
     fontSize: '1.75rem',
-    fontWeight: 'bold',
-    color: '#1f2937',
+    fontWeight: 800,
+    color: '#0f172a',
     marginBottom: '1.5rem',
     marginTop: 0,
   },
@@ -179,12 +180,13 @@ const styles = {
   },
   card: {
     backgroundColor: '#fff',
-    borderRadius: '12px',
-    boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+    borderRadius: '14px',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+    border: '1px solid #f0f1f3',
     padding: '1.5rem',
   },
   faqItem: {
-    borderBottom: '1px solid #e5e7eb',
+    borderBottom: '1px solid #f4f5f7',
   },
   faqQuestion: {
     display: 'flex',
@@ -196,14 +198,14 @@ const styles = {
     border: 'none',
     cursor: 'pointer',
     textAlign: 'left',
-    fontSize: '0.95rem',
-    fontWeight: '500',
+    fontSize: '0.9rem',
+    fontWeight: 600,
     color: '#1f2937',
   },
   faqAnswer: {
-    fontSize: '0.9rem',
-    color: '#6b7280',
-    lineHeight: 1.5,
+    fontSize: '0.875rem',
+    color: '#4b5563',
+    lineHeight: 1.6,
   },
   contactText: {
     margin: '0 0 1rem 0',
@@ -215,31 +217,32 @@ const styles = {
     gap: '1rem',
   },
   emailLink: {
-    color: '#9B0000',
+    color: '#8B0000',
     textDecoration: 'none',
-    fontWeight: '500',
+    fontWeight: 700,
   },
   copyBtn: {
     padding: '0.5rem 1rem',
     backgroundColor: '#f3f4f6',
-    border: '1px solid #d1d5db',
-    borderRadius: '6px',
-    fontSize: '0.85rem',
+    border: '1px solid #e8eaed',
+    borderRadius: '8px',
+    fontSize: '0.8125rem',
     cursor: 'pointer',
     color: '#374151',
+    fontWeight: 600,
   },
   infoRow: {
     display: 'flex',
     justifyContent: 'space-between',
     padding: '0.5rem 0',
-    borderBottom: '1px solid #e5e7eb',
+    borderBottom: '1px solid #f4f5f7',
   },
   infoLabel: {
-    color: '#6b7280',
+    color: '#9ca3af',
   },
   infoValue: {
     color: '#1f2937',
-    fontWeight: '500',
+    fontWeight: 600,
   },
 };
 

@@ -12,7 +12,7 @@ const navItems = [
   { label: 'Help',          path: '/help',      Icon: HelpCircle },
 ];
 
-const NAVBAR_HEIGHT = 56;
+const NAVBAR_HEIGHT = 60;
 
 function Navbar({ currentPath, onNavigate, onLogout }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -167,7 +167,7 @@ function Navbar({ currentPath, onNavigate, onLogout }) {
                   <Icon
                     size={20}
                     strokeWidth={2}
-                    color={currentPath === path ? '#9B0000' : '#6b7280'}
+                    color={currentPath === path ? '#8B0000' : '#6b7280'}
                   />
                   <span>{label}</span>
                 </button>
@@ -193,7 +193,7 @@ function Navbar({ currentPath, onNavigate, onLogout }) {
   );
 }
 
-const BRAND = '#9B0000';
+const BRAND = '#8B0000';
 
 const styles = {
 
@@ -228,10 +228,11 @@ const styles = {
     display: 'block',
   },
   logoText: {
+    fontFamily: 'var(--font)',
     fontSize: '1.2rem',
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#fff',
-    letterSpacing: '0.3px',
+    letterSpacing: '-0.2px',
     whiteSpace: 'nowrap',
   },
 
@@ -253,7 +254,8 @@ const styles = {
     background: 'none',
     border: 'none',
     borderRadius: '6px',
-    fontSize: '0.875rem',
+    fontFamily: 'var(--font)',
+    fontSize: '0.8375rem',
     color: 'rgba(255,255,255,0.8)',
     cursor: 'pointer',
     whiteSpace: 'nowrap',
@@ -286,7 +288,8 @@ const styles = {
     color: '#fff',
     border: '1px solid rgba(255,255,255,0.35)',
     borderRadius: '6px',
-    fontSize: '0.875rem',
+    fontFamily: 'var(--font)',
+    fontSize: '0.8375rem',
     fontWeight: '600',
     cursor: 'pointer',
     whiteSpace: 'nowrap',
@@ -311,10 +314,10 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    background: 'none',
+    background: 'rgba(255,255,255,0.1)',
     border: 'none',
     cursor: 'pointer',
-    borderRadius: '6px',
+    borderRadius: '8px',
     flexShrink: 0,
   },
   mobileLogo: {
@@ -327,10 +330,11 @@ const styles = {
     width: 'auto',
   },
   mobileLogoText: {
+    fontFamily: 'var(--font)',
     fontSize: '1.1rem',
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#fff',
-    letterSpacing: '0.2px',
+    letterSpacing: '-0.2px',
   },
 
   /* ── Sidebar ── */
@@ -338,6 +342,7 @@ const styles = {
     position: 'fixed',
     inset: 0,
     backgroundColor: 'rgba(0,0,0,0.5)',
+    backdropFilter: 'blur(2px)',
     zIndex: 199,
     transition: 'opacity 0.3s ease',
   },
@@ -351,7 +356,7 @@ const styles = {
     zIndex: 200,
     display: 'flex',
     flexDirection: 'column',
-    boxShadow: '4px 0 16px rgba(0,0,0,0.12)',
+    boxShadow: '4px 0 24px rgba(0,0,0,0.12)',
     transition: 'transform 0.3s cubic-bezier(0.4,0,0.2,1)',
   },
   sidebarTop: {
@@ -371,9 +376,11 @@ const styles = {
     width: 'auto',
   },
   sidebarLogoText: {
+    fontFamily: 'var(--font)',
     fontSize: '1.25rem',
-    fontWeight: '700',
+    fontWeight: '800',
     color: BRAND,
+    letterSpacing: '-0.2px',
   },
   closeBtn: {
     width: 36,
@@ -381,10 +388,10 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    background: 'none',
+    background: '#f4f5f7',
     border: 'none',
     cursor: 'pointer',
-    borderRadius: '6px',
+    borderRadius: '8px',
   },
   sidebarNav: {
     flex: 1,
@@ -403,6 +410,7 @@ const styles = {
     background: 'none',
     border: 'none',
     borderRadius: '8px',
+    fontFamily: 'var(--font)',
     fontSize: '0.95rem',
     color: '#374151',
     cursor: 'pointer',
@@ -430,6 +438,7 @@ const styles = {
     background: 'none',
     border: 'none',
     borderRadius: '8px',
+    fontFamily: 'var(--font)',
     fontSize: '0.95rem',
     color: '#dc2626',
     cursor: 'pointer',

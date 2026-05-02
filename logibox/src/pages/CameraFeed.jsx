@@ -41,6 +41,13 @@ function CameraFeed() {
 
           {/* Info Banner */}
           <div style={styles.infoBanner}>
+            <span style={styles.infoIcon} aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#92400e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="16" x2="12" y2="12" />
+                <line x1="12" y1="8" x2="12.01" y2="8" />
+              </svg>
+            </span>
             Camera integration coming soon. This is a preview layout.
           </div>
 
@@ -53,9 +60,11 @@ function CameraFeed() {
                   <span style={styles.offlineBadge}>Offline</span>
                 </div>
                 <div style={styles.cameraPlaceholder}>
-                  <svg width={48} height={48} viewBox="0 0 24 24" fill="#9ca3af">
-                    <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
-                  </svg>
+                  <div style={styles.cameraIconCircle}>
+                    <svg width={28} height={28} viewBox="0 0 24 24" fill="#9ca3af">
+                      <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+                    </svg>
+                  </div>
                   <span style={styles.noFeedText}>No Feed Available</span>
                 </div>
                 <div style={styles.lastUpdated}>
@@ -75,7 +84,8 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     minHeight: '100vh',
-    backgroundColor: '#f5f6fa',
+    backgroundColor: '#f4f5f7',
+    fontFamily: 'var(--font)',
   },
   main: {
     flex: 1,
@@ -88,18 +98,27 @@ const styles = {
   },
   pageTitle: {
     fontSize: '1.75rem',
-    fontWeight: 'bold',
-    color: '#1f2937',
+    fontWeight: 800,
+    color: '#0f172a',
     marginBottom: '1.5rem',
     marginTop: 0,
   },
   infoBanner: {
-    backgroundColor: '#fef9c3',
-    color: '#854d0e',
+    backgroundColor: '#fffbeb',
+    border: '1px solid rgba(217,119,6,0.2)',
+    borderRadius: '10px',
+    color: '#92400e',
     padding: '1rem',
-    borderRadius: '8px',
     marginBottom: '1.5rem',
-    fontSize: '0.95rem',
+    fontSize: '0.875rem',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+  infoIcon: {
+    flexShrink: 0,
+    display: 'inline-flex',
+    alignItems: 'center',
   },
   cameraGrid: {
     display: 'grid',
@@ -108,8 +127,9 @@ const styles = {
   },
   cameraCard: {
     backgroundColor: '#fff',
-    borderRadius: '12px',
-    boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+    borderRadius: '14px',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+    border: '1px solid #f0f1f3',
     overflow: 'hidden',
   },
   cameraHeader: {
@@ -117,29 +137,39 @@ const styles = {
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: '1rem 1.25rem',
-    borderBottom: '1px solid #e5e7eb',
+    borderBottom: '1px solid #f4f5f7',
   },
   cameraTitle: {
     fontSize: '1rem',
-    fontWeight: 'bold',
+    fontWeight: 700,
     color: '#1f2937',
   },
   offlineBadge: {
     padding: '0.25rem 0.75rem',
     borderRadius: '9999px',
-    fontSize: '0.75rem',
-    fontWeight: '600',
-    backgroundColor: '#e5e7eb',
+    fontSize: '0.7rem',
+    fontWeight: 700,
+    backgroundColor: '#f4f5f7',
     color: '#6b7280',
+    textTransform: 'uppercase',
   },
   cameraPlaceholder: {
     aspectRatio: '16/9',
-    backgroundColor: '#374151',
+    backgroundColor: '#1e293b',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
     gap: '0.5rem',
+  },
+  cameraIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: '50%',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   noFeedText: {
     color: '#9ca3af',

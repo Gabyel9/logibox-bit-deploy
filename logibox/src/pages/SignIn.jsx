@@ -79,6 +79,7 @@ function SignIn() {
 
   return (
     <div style={styles.container}>
+      <div style={styles.blobTopRight} />
       <div className="page-enter" style={styles.card}>
 
         <div style={styles.logoContainer}>
@@ -194,18 +195,33 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    background: 'linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%)',
+    background: 'linear-gradient(145deg, #fff8f8 0%, #f4f5f7 60%, #fff 100%)',
+    position: 'relative',
+    overflow: 'hidden',
     padding: '1rem',
     boxSizing: 'border-box',
+    fontFamily: 'var(--font)',
+  },
+  blobTopRight: {
+    position: 'absolute',
+    top: '-120px',
+    right: '-120px',
+    width: '400px',
+    height: '400px',
+    borderRadius: '50%',
+    background: 'radial-gradient(circle, rgba(139,0,0,0.06) 0%, transparent 70%)',
+    pointerEvents: 'none',
   },
   card: {
     backgroundColor: '#fff',
     padding: '2.5rem',
-    borderRadius: '16px',
-    boxShadow: '0 8px 32px rgba(0,0,0,0.08)',
+    borderRadius: '20px',
+    boxShadow: '0 4px 24px rgba(0,0,0,0.07), 0 1px 4px rgba(0,0,0,0.05)',
+    border: '1px solid #f0f1f3',
     width: '100%',
     maxWidth: '400px',
     boxSizing: 'border-box',
+    position: 'relative',
   },
   logoContainer: {
     marginBottom: '1rem',
@@ -219,17 +235,19 @@ const styles = {
   },
   title: {
     textAlign: 'center',
-    color: '#1f2937',
+    color: '#0f172a',
     marginBottom: '0.5rem',
-    fontSize: '1.75rem',
-    fontWeight: 'bold',
+    fontSize: '1.625rem',
+    fontWeight: 800,
     marginTop: 0,
+    letterSpacing: '-0.5px',
+    fontFamily: 'var(--font)',
   },
   subtitle: {
     textAlign: 'center',
     color: '#6b7280',
     marginBottom: '1.5rem',
-    fontSize: '1rem',
+    fontSize: '0.9rem',
     marginTop: 0,
   },
   form: {
@@ -243,9 +261,10 @@ const styles = {
     gap: '0.5rem',
   },
   label: {
-    fontSize: '0.875rem',
-    fontWeight: '600',
+    fontSize: '0.8125rem',
+    fontWeight: 600,
     color: '#374151',
+    letterSpacing: '0.01em',
   },
   passwordWrapper: {
     position: 'relative',
@@ -253,9 +272,11 @@ const styles = {
   },
   input: {
     width: '100%',
-    padding: '0.75rem 2.75rem 0.75rem 0.75rem',
-    border: '1px solid #d1d5db',
-    borderRadius: '12px',
+    padding: '0.7rem 2.75rem 0.7rem 0.875rem',
+    border: '1.5px solid #e8eaed',
+    backgroundColor: '#fafafa',
+    fontFamily: 'var(--font)',
+    borderRadius: '10px',
     fontSize: '1rem',
     boxSizing: 'border-box',
     transition: 'border-color 0.2s ease',
@@ -285,15 +306,17 @@ const styles = {
   submitBtn: {
     width: '100%',
     padding: '0.875rem',
-    backgroundColor: '#9B0000',
+    backgroundColor: '#8B0000',
     color: '#fff',
     border: 'none',
-    borderRadius: '12px',
+    borderRadius: '10px',
     fontSize: '1rem',
-    fontWeight: '600',
+    fontWeight: 700,
     cursor: 'pointer',
     marginTop: '0.25rem',
     boxSizing: 'border-box',
+    fontFamily: 'var(--font)',
+    letterSpacing: '-0.1px',
   },
   divider: {
     display: 'flex',
@@ -304,7 +327,7 @@ const styles = {
   dividerLine: {
     flex: 1,
     height: '1px',
-    backgroundColor: '#e5e7eb',
+    backgroundColor: '#f0f1f3',
   },
   dividerText: {
     color: '#9ca3af',
@@ -316,12 +339,12 @@ const styles = {
   googleBtn: {
     width: '100%',
     padding: '0.75rem 1rem',
-    backgroundColor: '#fff',
+    backgroundColor: '#fafafa',
     color: '#374151',
-    border: '1px solid #d1d5db',
-    borderRadius: '12px',
+    border: '1.5px solid #e8eaed',
+    borderRadius: '10px',
     fontSize: '0.95rem',
-    fontWeight: '500',
+    fontWeight: 600,
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
@@ -335,11 +358,11 @@ const styles = {
   footer: {
     textAlign: 'center',
     marginTop: '1.5rem',
-    color: '#6b7280',
+    color: '#9ca3af',
     fontSize: '0.9rem',
   },
   link: {
-    color: '#9B0000',
+    color: '#8B0000',
     textDecoration: 'none',
     fontWeight: '600',
   },

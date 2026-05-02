@@ -275,8 +275,8 @@ function Dashboard() {
   const r = {
     statsGrid: {
       display: 'grid',
-      gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(220px, 1fr))',
-      gap: isMobile ? '1rem' : '1.5rem',
+      gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4, 1fr)',
+      gap: isMobile ? '0.75rem' : '1.25rem',
       marginBottom: '2rem',
     },
     vaultGrid: {
@@ -315,7 +315,8 @@ function Dashboard() {
   const desktopOverlay = {
     position: 'fixed',
     inset: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    backdropFilter: 'blur(3px)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -333,39 +334,35 @@ function Dashboard() {
           <h1 style={{
             ...styles.pageTitle,
             fontSize: isMobile ? '1.5rem' : '1.75rem',
-            marginBottom: isMobile ? '1rem' : '1.5rem',
+            marginBottom: '0.4rem',
           }}>
             Dashboard
           </h1>
+          <p style={styles.pageSubtitle}>Manage your delivery vaults and track activity</p>
 
           {/* Stats Grid */}
           <div style={r.statsGrid}>
             {[
-              { label: 'Assigned Vaults', value: assignedCount, icon: 'M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z', color: '#9B0000' },
-              { label: 'Occupied Vaults', value: occupiedCount, icon: 'M20 4H4c-1.11 0-2 .89-2 2v12c0 1.1.89 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.89-2-2-2zm0 14H4V6h16v12z', color: '#9B0000' },
-              { label: 'Cash Loaded', value: `₱${cashLoaded.toFixed(2)}`, icon: 'M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z', color: '#2ecc71', valueStyle: { color: '#2ecc71' } },
-              { label: 'Active OTPs', value: activeOTPCount, icon: 'M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h2c0-1.66-1.34-3-3-3S3 4.34 3 6v2H1v14h22V8h-5zm-6-2c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm6 16H6V10h12v12zm-6-8c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z', color: '#f39c12' },
+              { label: 'Assigned Vaults', value: assignedCount, icon: 'M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z', iconColor: '#8B0000', iconBg: 'rgba(139,0,0,0.08)' },
+              { label: 'Occupied Vaults', value: occupiedCount, icon: 'M20 4H4c-1.11 0-2 .89-2 2v12c0 1.1.89 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.89-2-2-2zm0 14H4V6h16v12z', iconColor: '#d97706', iconBg: 'rgba(217,119,6,0.08)' },
+              { label: 'Cash Loaded', value: `₱${cashLoaded.toFixed(2)}`, icon: 'M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z', iconColor: '#16a34a', iconBg: 'rgba(22,163,74,0.08)', valueStyle: { color: '#16a34a' } },
+              { label: 'Active OTPs', value: activeOTPCount, icon: 'M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h2c0-1.66-1.34-3-3-3S3 4.34 3 6v2H1v14h22V8h-5zm-6-2c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm6 16H6V10h12v12zm-6-8c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z', iconColor: '#7c3aed', iconBg: 'rgba(124,58,237,0.08)' },
             ].map((stat, i) => (
               <div
                 key={i}
                 className="card-enter stat-card-animate"
                 style={{
                   ...styles.statCard,
-                  flexDirection: isMobile ? 'row' : 'column',
-                  padding: isMobile ? '1rem' : '1.5rem',
+                  padding: isMobile ? '0.95rem' : '1.25rem',
                 }}
               >
-                <div style={{
-                  ...styles.statIcon,
-                  width: isMobile ? 40 : 48,
-                  height: isMobile ? 40 : 48,
-                }}>
-                  <svg width={isMobile ? 20 : 24} height={isMobile ? 20 : 24} viewBox="0 0 24 24" fill={stat.color}>
+                <div style={{ ...styles.statIconWrap, backgroundColor: stat.iconBg }}>
+                  <svg width={isMobile ? 18 : 20} height={isMobile ? 18 : 20} viewBox="0 0 24 24" fill={stat.iconColor}>
                     <path d={stat.icon}/>
                   </svg>
                 </div>
                 <div style={styles.statInfo}>
-                  <div style={{ ...styles.statValue, fontSize: isMobile ? '1.25rem' : '1.75rem', ...stat.valueStyle }}>
+                  <div style={{ ...styles.statValue, fontSize: isMobile ? '1.375rem' : '1.75rem', ...stat.valueStyle }}>
                     {stat.value}
                   </div>
                   <div style={styles.statLabel}>{stat.label}</div>
@@ -410,11 +407,14 @@ function Dashboard() {
                   return (
                     <div key={vault.id} className="vault-card-enter vault-card-animate" style={styles.vaultCard}>
                       <div style={styles.vaultHeader}>
-                        <span style={styles.vaultNumber}>Vault {vault.id}</span>
+                        <div style={styles.vaultNumberWrap}>
+                          <span style={styles.vaultDot} />
+                          <span style={styles.vaultNumber}>Vault {vault.id}</span>
+                        </div>
                         <span style={{
                           ...styles.vaultBadge,
                           backgroundColor: vault.status === 'empty' ? '#e5e7eb' : vault.status === 'completed' ? '#d1fae5' : '#fee2e2',
-                          color: vault.status === 'empty' ? '#6b7280' : vault.status === 'completed' ? '#059669' : '#9B0000',
+                          color: vault.status === 'empty' ? '#6b7280' : vault.status === 'completed' ? '#059669' : '#8B0000',
                         }}>
                           {vault.status === 'empty' ? 'Empty' : vault.status === 'completed' ? 'Completed' : 'Occupied'}
                         </span>
@@ -423,10 +423,13 @@ function Dashboard() {
                       {vault.status === 'empty' && (
                         <div style={styles.vaultContent}>
                           <div style={styles.emptyState}>
-                            <svg width={isMobile ? 40 : 48} height={isMobile ? 40 : 48} viewBox="0 0 24 24" fill="#d1d5db">
-                              <path d="M20 4H4c-1.11 0-2 .89-2 2v12c0 1.1.89 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.89-2-2-2zm0 14H4V6h16v12zM6 10h2v2H6zm0 4h8v2H6z"/>
-                            </svg>
+                            <div style={styles.emptyIconWrap}>
+                              <svg width={22} height={22} viewBox="0 0 24 24" fill="#9ca3af">
+                                <path d="M20 4H4c-1.11 0-2 .89-2 2v12c0 1.1.89 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.89-2-2-2zm0 14H4V6h16v12zM6 10h2v2H6zm0 4h8v2H6z"/>
+                              </svg>
+                            </div>
                             <p style={styles.emptyText}>No delivery assigned</p>
+                            <p style={styles.emptySubtitle}>This vault is ready to accept a delivery</p>
                           </div>
                           <button
                             className="btn-animate"
@@ -441,21 +444,19 @@ function Dashboard() {
                       {(vault.status === 'assigned' || vault.status === 'otp_active' || vault.status === 'otp_expired') && (
                         <div style={styles.vaultContent}>
                           <div style={styles.vaultDetails}>
-                            {[
-                              { label: 'Delivery Rider', value: vault.receiverName },
-                              { label: 'Contact', value: vault.contactNumber },
-                              { label: 'Parcel', value: vault.parcelInfo },
-                              { label: 'Fee', value: `₱${vault.deliveryFee}` },
-                            ].map((item, i) => (
-                              <div key={i} style={{
-                                ...styles.detailRow,
-                                flexDirection: isMobile ? 'column' : 'row',
-                                alignItems: isMobile ? 'flex-start' : 'center',
-                              }}>
-                                <span style={styles.detailLabel}>{item.label}</span>
-                                <span style={{ ...styles.detailValue, wordBreak: 'break-word' }}>{item.value}</span>
-                              </div>
-                            ))}
+                            <div style={styles.detailGrid}>
+                              {[
+                                { label: 'Delivery Rider', value: vault.receiverName },
+                                { label: 'Contact', value: vault.contactNumber },
+                                { label: 'Parcel', value: vault.parcelInfo },
+                                { label: 'Fee', value: `₱${vault.deliveryFee}` },
+                              ].map((item, i) => (
+                                <div key={i} style={styles.detailItem}>
+                                  <div style={styles.detailItemLabel}>{item.label}</div>
+                                  <div style={styles.detailItemValue}>{item.value}</div>
+                                </div>
+                              ))}
+                            </div>
 
                             {!vault.otp && (
                               <button
@@ -469,18 +470,17 @@ function Dashboard() {
 
                             {vault.otp && isActive && (
                               <>
-                                <div style={styles.otpBox}>
-                                  <span style={styles.otpLabel}>OTP</span>
-                                  <span
-                                    className="otp-active-pulse"
-                                    style={{ ...styles.otpValue, fontSize: isMobile ? '1.1rem' : '1.25rem' }}
-                                  >
-                                    {vault.otp}
-                                  </span>
-                                </div>
-                                <div style={styles.timerBox}>
-                                  <span style={styles.timerLabel}>Expires in</span>
-                                  <span style={styles.timerValue}>{formatTime(timeRemaining)}</span>
+                                <div style={styles.otpWrap}>
+                                  <div>
+                                    <div style={styles.otpLabel}>OTP</div>
+                                    <div className="otp-active-pulse" style={{ ...styles.otpValue, fontSize: isMobile ? '1.25rem' : '1.5rem' }}>
+                                      {vault.otp}
+                                    </div>
+                                  </div>
+                                  <div style={styles.otpTimer}>
+                                    <div style={styles.timerLabel}>Expires in</div>
+                                    <div style={styles.timerValue}>{formatTime(timeRemaining)}</div>
+                                  </div>
                                 </div>
                                 <button
                                   className="btn-animate"
@@ -669,23 +669,31 @@ function Dashboard() {
             display: 'flex',
             flexDirection: 'column',
             justifyContent: 'flex-end',
-            backgroundColor: 'rgba(0,0,0,0.5)',
+            backgroundColor: 'rgba(0,0,0,0.45)',
+            backdropFilter: 'blur(3px)',
           }}>
             <div style={{
               backgroundColor: '#fff',
-              borderRadius: '16px 16px 0 0',
+              borderRadius: '20px 20px 0 0',
               padding: '1.5rem 1rem 2rem',
               display: 'flex',
               flexDirection: 'column',
               gap: '1rem',
             }}>
               <div style={{ width: 40, height: 4, backgroundColor: '#d1d5db', borderRadius: 2, alignSelf: 'center', marginBottom: 8 }} />
+              <div style={styles.warningIconCircle}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                  <line x1="12" y1="9" x2="12" y2="13"/>
+                  <line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+              </div>
               <h3 style={{ ...styles.modalTitle, textAlign: 'center' }}>Warning</h3>
               <p style={{ ...styles.warningText, marginBottom: '0.5rem' }}>
-                The vault will open automatically after confirmation.
+                The vault will open automatically. Make sure the rider is ready to collect the parcel.
               </p>
               <button className="btn-animate" style={{ ...styles.confirmBtn, minHeight: 48, fontSize: '1rem' }} onClick={handleConfirmWithWarning}>
-                Confirm
+                Confirm & Open Vault
               </button>
               <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44, width: '100%' }} onClick={() => setShowWarningModal(false)}>
                 Cancel
@@ -704,14 +712,23 @@ function Dashboard() {
                 </button>
               </div>
               <div style={styles.modalBody}>
-                <p style={styles.warningText}>The vault will open automatically after confirmation</p>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem', paddingTop: '0.25rem' }}>
+                  <div style={styles.warningIconCircle}>
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                      <line x1="12" y1="9" x2="12" y2="13"/>
+                      <line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                  </div>
+                  <p style={styles.warningText}>The vault will open automatically. Make sure the rider is ready to collect the parcel.</p>
+                </div>
               </div>
               <div style={{ ...r.modalFooter, flexDirection: 'column' }}>
                 <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44 }} onClick={() => setShowWarningModal(false)}>
                   Cancel
                 </button>
                 <button className="btn-animate" style={{ ...styles.confirmBtn, minHeight: 44 }} onClick={handleConfirmWithWarning}>
-                  Confirm
+                  Confirm & Open Vault
                 </button>
               </div>
             </div>
@@ -796,77 +813,84 @@ function Dashboard() {
 }
 
 const styles = {
-  layout: { display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f5f6fa' },
+  layout: { display: 'flex', flexDirection: 'column', minHeight: '100vh', backgroundColor: '#f4f5f7', fontFamily: 'var(--font)' },
   main: { flex: 1, minWidth: 0 },
   content: { padding: '2rem', maxWidth: 1200, margin: '0 auto' },
-  pageTitle: { fontSize: '1.75rem', fontWeight: 'bold', color: '#1f2937', marginBottom: '1.5rem', marginTop: 0 },
-  statCard: { backgroundColor: '#fff', borderRadius: '12px', padding: '1.5rem', display: 'flex', alignItems: 'center', gap: '1rem', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' },
-  statIcon: { borderRadius: '12px', backgroundColor: '#fef2f2', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  pageTitle: { fontSize: '1.75rem', fontWeight: 800, color: '#0f172a', marginBottom: '1.5rem', marginTop: 0, letterSpacing: '-0.4px' },
+  pageSubtitle: { fontSize: '0.875rem', color: '#6b7280', margin: 0, fontWeight: 400, marginBottom: '1.25rem' },
+  statCard: { backgroundColor: '#fff', borderRadius: '14px', padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', border: '1px solid #f0f1f3' },
+  statIconWrap: { width: 36, height: 36, borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' },
   statInfo: { flex: 1 },
-  statValue: { fontSize: '1.75rem', fontWeight: 'bold', color: '#1f2937' },
-  statLabel: { fontSize: '0.875rem', color: '#6b7280', marginTop: 2 },
-  vaultSection: { backgroundColor: '#fff', borderRadius: '12px', padding: '1.5rem', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' },
+  statValue: { fontSize: '1.75rem', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.5px' },
+  statLabel: { fontSize: '0.775rem', color: '#6b7280', marginTop: 2 },
+  vaultSection: { backgroundColor: '#fff', borderRadius: '14px', padding: '1.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', border: '1px solid #f0f1f3' },
   vaultSectionHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' },
   sectionTitle: { fontSize: '1.25rem', fontWeight: 'bold', color: '#1f2937', margin: 0 },
-  filterBtn: { padding: '0.5rem 1rem', backgroundColor: '#fff', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '0.85rem', color: '#6b7280', cursor: 'pointer', transition: 'all 0.2s ease' },
-  filterBtnActive: { backgroundColor: '#9B0000', borderColor: '#9B0000', color: '#fff' },
-  vaultCard: { backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' },
-  vaultHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 1.25rem', borderBottom: '1px solid #e5e7eb' },
+  filterBtn: { padding: '0.5rem 0.875rem', backgroundColor: '#f4f5f7', border: '1px solid transparent', borderRadius: '8px', fontSize: '0.8125rem', color: '#6b7280', cursor: 'pointer', transition: 'all 0.2s ease' },
+  filterBtnActive: { backgroundColor: '#8B0000', borderColor: '#8B0000', color: '#fff' },
+  vaultCard: { backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #f0f1f3', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' },
+  vaultHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 1.25rem', borderBottom: '1px solid #f4f5f7' },
+  vaultNumberWrap: { display: 'flex', alignItems: 'center', gap: '0.5rem' },
+  vaultDot: { width: 8, height: 8, borderRadius: '50%', backgroundColor: '#8B0000' },
   vaultNumber: { fontSize: '1rem', fontWeight: 'bold', color: '#1f2937' },
-  vaultBadge: { padding: '0.25rem 0.75rem', borderRadius: '9999px', fontSize: '0.75rem', fontWeight: '600', textTransform: 'uppercase' },
+  vaultBadge: { padding: '0.25rem 0.75rem', borderRadius: 99, fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' },
   vaultContent: { padding: '1.25rem' },
   emptyState: { display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '1.5rem 0' },
-  emptyText: { marginTop: '0.75rem', color: '#9ca3af', fontSize: '0.9rem' },
-  setDeliveryBtn: { width: '100%', padding: '0.75rem', backgroundColor: '#9B0000', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '0.95rem', fontWeight: '600', cursor: 'pointer' },
+  emptyIconWrap: { width: 52, height: 52, borderRadius: '14px', backgroundColor: '#f4f5f7', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  emptyText: { marginTop: '0.75rem', color: '#0f172a', fontSize: '0.9rem', fontWeight: 600, marginBottom: '0.25rem' },
+  emptySubtitle: { color: '#9ca3af', fontSize: '0.775rem', margin: 0 },
+  setDeliveryBtn: { width: '100%', padding: '0.75rem', backgroundColor: '#8B0000', color: '#fff', border: 'none', borderRadius: '10px', fontSize: '0.875rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font)' },
   vaultDetails: { display: 'flex', flexDirection: 'column', gap: '0.75rem' },
-  detailRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  detailLabel: { fontSize: '0.85rem', color: '#6b7280' },
-  detailValue: { fontSize: '0.95rem', fontWeight: '500', color: '#1f2937' },
-  generateOtpBtn: { width: '100%', padding: '0.75rem', backgroundColor: '#9B0000', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '0.95rem', fontWeight: '600', cursor: 'pointer' },
-  otpBox: { padding: '0.75rem', backgroundColor: '#fef2f2', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  otpLabel: { fontSize: '0.85rem', color: '#9B0000', fontWeight: '600' },
-  otpValue: { fontSize: '1.25rem', fontWeight: 'bold', color: '#9B0000', letterSpacing: '2px' },
-  timerBox: { padding: '0.5rem 0.75rem', backgroundColor: '#fff', border: '1px solid #d1d5db', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  timerLabel: { fontSize: '0.8rem', color: '#6b7280' },
-  timerValue: { fontSize: '1rem', fontWeight: 'bold', color: '#f39c12' },
-  copyOtpBtn: { width: '100%', padding: '0.625rem', backgroundColor: '#fff', color: '#374151', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '0.9rem', fontWeight: '500', cursor: 'pointer' },
+  detailGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' },
+  detailItem: { backgroundColor: '#f9fafb', borderRadius: '8px', padding: '0.5rem 0.625rem' },
+  detailItemLabel: { fontSize: '0.7rem', color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' },
+  detailItemValue: { fontSize: '0.875rem', fontWeight: 600, color: '#0f172a', wordBreak: 'break-word', marginTop: 2 },
+  generateOtpBtn: { width: '100%', padding: '0.75rem', backgroundColor: '#8B0000', color: '#fff', border: 'none', borderRadius: '10px', fontSize: '0.875rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font)' },
+  otpWrap: { backgroundColor: '#fdf2f2', borderRadius: '10px', padding: '0.875rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' },
+  otpLabel: { fontSize: '0.7rem', color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' },
+  otpValue: { fontSize: '1.5rem', fontWeight: 800, color: '#8B0000', letterSpacing: '4px' },
+  otpTimer: { textAlign: 'right' },
+  timerLabel: { fontSize: '0.7rem', color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' },
+  timerValue: { fontSize: '0.95rem', fontWeight: 800, color: '#0f172a' },
+  copyOtpBtn: { width: '100%', padding: '0.625rem', backgroundColor: 'transparent', color: '#8B0000', border: '1.5px solid #8B0000', borderRadius: '8px', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' },
   copiedBtn: { width: '100%', padding: '0.625rem', backgroundColor: '#059669', color: '#fff', border: '1px solid #059669', borderRadius: '8px', fontSize: '0.9rem', fontWeight: '500', cursor: 'pointer' },
   expiredBox: { padding: '0.75rem', backgroundColor: '#fee2e2', borderRadius: '8px', display: 'flex', justifyContent: 'center', alignItems: 'center' },
-  expiredText: { fontSize: '0.9rem', fontWeight: 'bold', color: '#dc2626' },
-  regenerateOtpBtn: { width: '100%', padding: '0.75rem', backgroundColor: '#9B0000', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '0.95rem', fontWeight: '600', cursor: 'pointer' },
-  resetVaultBtn: { padding: '0.75rem', backgroundColor: '#fff', color: '#6b7280', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '0.95rem', fontWeight: '500', cursor: 'pointer' },
-  confirmBtn: { flex: 1, padding: '0.75rem', backgroundColor: '#9B0000', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '0.95rem', fontWeight: '600', cursor: 'pointer' },
+  expiredText: { fontSize: '0.7rem', fontWeight: 700, color: '#dc2626', textTransform: 'uppercase', letterSpacing: '0.04em' },
+  regenerateOtpBtn: { width: '100%', padding: '0.75rem', backgroundColor: '#8B0000', color: '#fff', border: 'none', borderRadius: '10px', fontSize: '0.875rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font)' },
+  resetVaultBtn: { padding: '0.75rem', backgroundColor: '#f4f5f7', color: '#374151', border: '1px solid #e8eaed', borderRadius: '10px', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' },
+  confirmBtn: { flex: 1, padding: '0.75rem', backgroundColor: '#8B0000', color: '#fff', border: 'none', borderRadius: '10px', fontSize: '0.875rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font)' },
   completedState: { display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '1.5rem 0' },
   completedText: { marginTop: '0.75rem', color: '#059669', fontSize: '0.9rem', fontWeight: '600' },
   timestamp: { marginTop: '0.75rem', fontSize: '0.75rem', color: '#9ca3af', textAlign: 'right' },
-  modal: { backgroundColor: '#fff', borderRadius: '16px', width: '100%', maxWidth: 450, overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: '90vh' },
-  modalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1.25rem 1.5rem', borderBottom: '1px solid #e5e7eb', flexShrink: 0, backgroundColor: '#fff' },
-  modalTitle: { fontSize: '1.1rem', fontWeight: 'bold', color: '#1f2937', margin: 0 },
-  closeBtn: { background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: '#6b7280' },
+  modal: { backgroundColor: '#fff', borderRadius: '20px', width: '100%', maxWidth: 450, overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: '90vh', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' },
+  modalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1.25rem 1.5rem', borderBottom: '1px solid #f0f1f3', flexShrink: 0, backgroundColor: '#fff' },
+  modalTitle: { fontSize: '1.0625rem', fontWeight: 800, color: '#0f172a', margin: 0, letterSpacing: '-0.2px' },
+  closeBtn: { background: '#f4f5f7', border: 'none', cursor: 'pointer', padding: '0.375rem', color: '#6b7280', borderRadius: '8px' },
   modalBody: { padding: '1.5rem', overflowY: 'auto' },
   formGroup: { marginBottom: '1rem' },
-  formLabel: { display: 'block', fontSize: '0.875rem', fontWeight: '600', color: '#374151', marginBottom: '0.5rem' },
-  formInput: { width: '100%', padding: '0.75rem', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '1rem', boxSizing: 'border-box' },
-  cancelBtn: { padding: '0.75rem 1.25rem', backgroundColor: '#fff', color: '#6b7280', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '0.95rem', fontWeight: '500', cursor: 'pointer' },
-  resetBtn: { padding: '0.75rem 1.25rem', backgroundColor: '#fff', color: '#374151', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '0.95rem', fontWeight: '500', cursor: 'pointer' },
-  saveBtn: { padding: '0.75rem 1.25rem', backgroundColor: '#9B0000', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '0.95rem', fontWeight: '600', cursor: 'pointer' },
+  formLabel: { display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', marginBottom: '0.5rem', letterSpacing: '0.01em' },
+  formInput: { width: '100%', padding: '0.75rem', border: '1.5px solid #e8eaed', borderRadius: '10px', fontSize: '1rem', boxSizing: 'border-box', backgroundColor: '#fafafa', fontFamily: 'var(--font)' },
+  cancelBtn: { padding: '0.75rem 1.25rem', backgroundColor: '#f4f5f7', color: '#374151', border: '1px solid #e8eaed', borderRadius: '10px', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' },
+  resetBtn: { padding: '0.75rem 1.25rem', backgroundColor: '#f4f5f7', color: '#374151', border: '1px solid #e8eaed', borderRadius: '10px', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' },
+  saveBtn: { padding: '0.75rem 1.25rem', backgroundColor: '#8B0000', color: '#fff', border: 'none', borderRadius: '10px', fontSize: '0.875rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font)' },
   warningText: { fontSize: '1rem', color: '#1f2937', textAlign: 'center' },
-  otpModal: { backgroundColor: '#fff', borderRadius: '16px', width: '100%', maxWidth: 380, overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: '90vh' },
+  warningIconCircle: { width: 52, height: 52, borderRadius: '50%', backgroundColor: '#fffbeb', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  otpModal: { backgroundColor: '#fff', borderRadius: '20px', width: '100%', maxWidth: 380, overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: '90vh', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' },
   otpModalHeader: { padding: '1.25rem 1.5rem', borderBottom: '1px solid #e5e7eb', textAlign: 'center', flexShrink: 0 },
   otpModalTitle: { fontSize: '1.1rem', fontWeight: 'bold', color: '#1f2937', margin: 0 },
   otpModalBody: { padding: '1.5rem', overflowY: 'auto', flex: 1 },
-  otpCodeBox: { backgroundColor: '#fef2f2', borderRadius: '12px', padding: '1.5rem', textAlign: 'center', marginBottom: '1rem' },
-  otpCodeLabel: { display: 'block', fontSize: '0.85rem', color: '#9B0000', fontWeight: '600', marginBottom: '0.5rem' },
-  otpCodeValue: { display: 'block', fontSize: '2.5rem', fontWeight: 'bold', color: '#9B0000', letterSpacing: '4px' },
+  otpCodeBox: { backgroundColor: '#fdf2f2', borderRadius: '14px', padding: '1.5rem', textAlign: 'center', marginBottom: '1rem', border: '1px solid rgba(139,0,0,0.08)' },
+  otpCodeLabel: { display: 'block', fontSize: '0.85rem', color: '#8B0000', fontWeight: 700, marginBottom: '0.5rem' },
+  otpCodeValue: { display: 'block', fontSize: '2.75rem', fontWeight: 800, color: '#8B0000', letterSpacing: '8px' },
   timerSection: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' },
   timerSectionLabel: { fontSize: '0.9rem', color: '#6b7280' },
   timerSectionValue: { fontSize: '1.25rem', fontWeight: 'bold', color: '#f39c12' },
   progressBarContainer: { height: '8px', backgroundColor: '#e5e7eb', borderRadius: '4px', overflow: 'hidden', marginBottom: '1rem' },
-  progressBar: { height: '100%', backgroundColor: '#9B0000', borderRadius: '4px', transition: 'width 1s linear' },
-  otpCopyBtn: { width: '100%', padding: '0.875rem', backgroundColor: '#9B0000', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '1rem', fontWeight: '600', cursor: 'pointer' },
+  progressBar: { height: '100%', backgroundColor: '#8B0000', borderRadius: '4px', transition: 'width 1s linear' },
+  otpCopyBtn: { width: '100%', padding: '0.875rem', backgroundColor: 'transparent', color: '#8B0000', border: '1.5px solid #8B0000', borderRadius: '8px', fontSize: '1rem', fontWeight: 600, cursor: 'pointer' },
   otpCopiedBtn: { width: '100%', padding: '0.875rem', backgroundColor: '#059669', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '1rem', fontWeight: '600', cursor: 'pointer' },
   otpModalFooter: { padding: '1rem 1.5rem', borderTop: '1px solid #e5e7eb', display: 'flex', justifyContent: 'center', flexShrink: 0 },
-  otpCloseBtn: { padding: '0.75rem 2rem', backgroundColor: '#fff', color: '#6b7280', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '0.95rem', fontWeight: '500', cursor: 'pointer' },
+  otpCloseBtn: { padding: '0.75rem 2rem', backgroundColor: '#f4f5f7', color: '#374151', border: '1px solid #e8eaed', borderRadius: '10px', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' },
 };
 
 export default Dashboard;
