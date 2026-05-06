@@ -208,9 +208,13 @@ function Settings() {
   const handleChangePassword = async () => {
     setPasswordError('');
     setPasswordSuccess('');
-    if (newPassword.length < 6) { setPasswordError('Password must be at least 6 characters'); return; }
-    if (newPassword !== confirmPassword) { setPasswordError('Passwords do not match'); return; }
     if (isGoogleUser) { setPasswordError('Google accounts cannot change password here'); return; }
+    if (!currentPassword) { setPasswordError('Please enter your current password'); return; }
+    if (newPassword.length < 8) { setPasswordError('Password must be at least 8 characters'); return; }
+    if (!/[A-Z]/.test(newPassword)) { setPasswordError('Password must contain at least 1 uppercase letter'); return; }
+    if (!/[0-9]/.test(newPassword)) { setPasswordError('Password must contain at least 1 number'); return; }
+    if (!/[!@#$%^&*]/.test(newPassword)) { setPasswordError('Password must contain at least 1 special character (!@#$%^&*)'); return; }
+    if (newPassword !== confirmPassword) { setPasswordError('Passwords do not match'); return; }
     try {
       const credential = EmailAuthProvider.credential(auth.currentUser.email, currentPassword);
       await reauthenticateWithCredential(auth.currentUser, credential);
@@ -229,6 +233,7 @@ function Settings() {
   const strength = getPasswordStrength(newPassword);
   const hasUpper = /[A-Z]/.test(newPassword);
   const hasNumber = /[0-9]/.test(newPassword);
+  const hasSpecial = /[!@#$%^&*]/.test(newPassword);
   const isLong = newPassword.length >= 8;
 
   return (
@@ -373,6 +378,7 @@ function Settings() {
                       <div style={{ marginTop: '0.5rem' }}>
                         <CheckItem passed={hasUpper} label="At least 1 uppercase" />
                         <CheckItem passed={hasNumber} label="At least 1 number" />
+                        <CheckItem passed={hasSpecial} label="At least 1 special character (!@#$%^&*)" />
                         <CheckItem passed={isLong} label="At least 8 characters" />
                       </div>
                     </div>

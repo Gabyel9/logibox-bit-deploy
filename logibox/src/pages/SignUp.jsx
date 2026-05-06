@@ -121,7 +121,7 @@ function SignUp() {
         formData.firstName,
         formData.lastName
       );
-      navigate('/dashboard');
+      navigate('/verify-email');
     } catch (err) {
       setGeneralError(err.message);
     } finally {

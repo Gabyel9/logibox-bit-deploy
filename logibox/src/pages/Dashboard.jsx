@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { collection, doc, setDoc, onSnapshot, writeBatch, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import { generateSecureOTP, hashOTP } from '../utils/otp';
 import Navbar from '../components/Navbar';
 
 function Dashboard() {
@@ -20,6 +21,8 @@ function Dashboard() {
   const [copiedId, setCopiedId] = useState(null);
   const [currentOTP, setCurrentOTP] = useState(null);
   const [otpTimeRemaining, setOtpTimeRemaining] = useState(0);
+  const [otpCooldowns, setOtpCooldowns] = useState({});
+  const OTP_COOLDOWN_MS = 60 * 1000;
   const [deliveryForm, setDeliveryForm] = useState({
     receiverName: '',
     contactNumber: '',
@@ -28,6 +31,7 @@ function Dashboard() {
   });
   const [vaults, setVaults] = useState([]);
   const [vaultsLoading, setVaultsLoading] = useState(true);
+  const [vaultOTPs, setVaultOTPs] = useState({});
 
   const OTP_DURATION_MS = (settings.otpDuration ?? 5) * 60 * 1000;
 
@@ -56,12 +60,22 @@ function Dashboard() {
     };
   }, [isMobile, showSetDeliveryModal, showWarningModal, showOTPModal]);
 
-  const generateOTP = useCallback(() => {
-    return Math.floor(100000 + Math.random() * 900000).toString();
-  }, []);
+  const isOtpOnCooldown = useCallback((vaultId) => {
+    const last = otpCooldowns[vaultId];
+    if (!last) return false;
+    return Date.now() - last < OTP_COOLDOWN_MS;
+  }, [otpCooldowns]);
+
+  const getCooldownRemaining = useCallback((vaultId) => {
+    const last = otpCooldowns[vaultId];
+    if (!last) return 0;
+    return Math.max(0, OTP_COOLDOWN_MS - (Date.now() - last));
+  }, [otpCooldowns]);
+
+  const generateOTP = useCallback(() => generateSecureOTP(), []);
 
   const checkOTPExpiry = useCallback((vault) => {
-    if (!vault.otpExpiresAt || !vault.otp) return { isExpired: false, isActive: false };
+    if (!vault.otpExpiresAt || !vault.otpHash) return { isExpired: false, isActive: false };
     const now = Date.now();
     const expiresAt = new Date(vault.otpExpiresAt).getTime();
     if (now >= expiresAt) return { isExpired: true, isActive: false };
@@ -86,19 +100,26 @@ function Dashboard() {
   }, [user]);
 
   const handleOpenOTPModal = useCallback(async (vault) => {
+    if (isOtpOnCooldown(vault.id)) return;
+
     const otp = generateOTP();
+    const otpHash = await hashOTP(otp);
     const now = new Date();
     const expiresAt = new Date(now.getTime() + OTP_DURATION_MS);
 
     const updatedVault = {
       ...vault,
-      otp,
+      otp: null,
+      otpHash,
       otpStatus: 'active',
       otpCreatedAt: now.toISOString(),
       otpExpiresAt: expiresAt.toISOString(),
+      lastOtpGeneratedAt: now.toISOString(),
     };
 
     await setDoc(doc(db, 'users', user.uid, 'vaults', vault.id.toString()), updatedVault);
+    setOtpCooldowns(prev => ({ ...prev, [vault.id]: Date.now() }));
+    setVaultOTPs(prev => ({ ...prev, [vault.id]: otp }));
     await logActivity('OTP Generated', `OTP generated for vault ${vault.id}`, vault.id);
 
     setCurrentOTP({
@@ -120,12 +141,18 @@ function Dashboard() {
       deliveryFee: null,
       createdAt: null,
       otp: null,
+      otpHash: null,
       otpStatus: null,
       otpCreatedAt: null,
       otpExpiresAt: null,
       completedAt: null,
     };
     await setDoc(doc(db, 'users', user.uid, 'vaults', vaultId.toString()), emptyVault);
+    setVaultOTPs(prev => {
+      const updated = { ...prev };
+      delete updated[vaultId];
+      return updated;
+    });
     await logActivity('Vault Reset', `Vault ${vaultId} was reset to empty`, vaultId);
   }, [user, logActivity]);
 
@@ -135,7 +162,14 @@ function Dashboard() {
         if (v.otpStatus === 'active' && v.otpExpiresAt) {
           const now = Date.now();
           const expiresAt = new Date(v.otpExpiresAt).getTime();
-          if (now >= expiresAt) return { ...v, otpStatus: 'expired' };
+          if (now >= expiresAt) {
+            setVaultOTPs(prev => {
+              const updated = { ...prev };
+              delete updated[v.id];
+              return updated;
+            });
+            return { ...v, otpStatus: 'expired' };
+          }
         }
         return v;
       }));
@@ -458,23 +492,31 @@ function Dashboard() {
                               ))}
                             </div>
 
-                            {!vault.otp && (
+                            {!vault.otpHash && (
                               <button
                                 className="btn-animate"
-                                style={{ ...styles.generateOtpBtn, minHeight: 44 }}
+                                style={{
+                                  ...styles.generateOtpBtn,
+                                  minHeight: 44,
+                                  opacity: isOtpOnCooldown(vault.id) ? 0.5 : 1,
+                                  cursor: isOtpOnCooldown(vault.id) ? 'not-allowed' : 'pointer',
+                                }}
+                                disabled={isOtpOnCooldown(vault.id)}
                                 onClick={() => handleOpenOTPModal(vault)}
                               >
-                                Generate OTP
+                                {isOtpOnCooldown(vault.id)
+                                  ? `Wait ${Math.ceil(getCooldownRemaining(vault.id) / 1000)}s`
+                                  : 'Generate OTP'}
                               </button>
                             )}
 
-                            {vault.otp && isActive && (
+                            {vault.otpHash && isActive && currentOTP && (
                               <>
                                 <div style={styles.otpWrap}>
                                   <div>
                                     <div style={styles.otpLabel}>OTP</div>
                                     <div className="otp-active-pulse" style={{ ...styles.otpValue, fontSize: isMobile ? '1.25rem' : '1.5rem' }}>
-                                      {vault.otp}
+                                      {currentOTP.code}
                                     </div>
                                   </div>
                                   <div style={styles.otpTimer}>
@@ -486,7 +528,7 @@ function Dashboard() {
                                   className="btn-animate"
                                   style={{ ...(copiedId === vault.id ? styles.copiedBtn : styles.copyOtpBtn), minHeight: 44 }}
                                   onClick={() => {
-                                    navigator.clipboard.writeText(vault.otp);
+                                    navigator.clipboard.writeText(currentOTP.code);
                                     setCopiedId(vault.id);
                                     setTimeout(() => setCopiedId(null), 2000);
                                   }}
@@ -496,7 +538,34 @@ function Dashboard() {
                               </>
                             )}
 
-                            {vault.otp && isExpired && (
+                            {vault.otpHash && isActive && !currentOTP && (
+                              <>
+                                <div style={styles.otpWrap}>
+                                  <div>
+                                    <div style={styles.otpLabel}>OTP</div>
+                                    <div className="otp-active-pulse" style={{
+                                      ...styles.otpValue,
+                                      fontSize: isMobile ? '1.25rem' : '1.5rem'
+                                    }}>
+                                      {vaultOTPs[vault.id] ?? '••••••'}
+                                    </div>
+                                  </div>
+                                  <div style={styles.otpTimer}>
+                                    <div style={styles.timerLabel}>Expires in</div>
+                                    <div style={styles.timerValue}>{formatTime(timeRemaining)}</div>
+                                  </div>
+                                </div>
+                                <button
+                                  className="btn-animate"
+                                  style={{ ...styles.regenerateOtpBtn, minHeight: 44 }}
+                                  onClick={() => handleOpenOTPModal(vault)}
+                                >
+                                  Regenerate OTP
+                                </button>
+                              </>
+                            )}
+
+                            {vault.otpHash && isExpired && (
                               <>
                                 <div style={styles.expiredBox}>
                                   <span style={styles.expiredText}>OTP EXPIRED</span>

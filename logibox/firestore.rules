@@ -1,0 +1,31 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // User's own data
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+
+      // User's vaults subcollection
+      match /vaults/{vaultId} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+
+        allow write: if request.auth != null && request.auth.uid == userId
+          && (
+            // Allow writes that are NOT OTP generation (no otpHash field being set)
+            !('otpHash' in request.resource.data)
+            ||
+            // Allow OTP generation only if no lastOtpGeneratedAt exists yet,
+            // OR if it was more than 60 seconds ago
+            !('lastOtpGeneratedAt' in resource.data)
+            || request.time > resource.data.lastOtpGeneratedAt + duration.value(60, 's')
+          );
+      }
+
+      // User's activityLogs subcollection
+      match /activityLogs/{logId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+  }
+}

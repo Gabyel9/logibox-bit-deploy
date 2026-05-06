@@ -9,6 +9,7 @@ import Help from './pages/Help';
 import Landing from './pages/Landing';
 import SignIn from './pages/SignIn';
 import SignUp from './pages/SignUp';
+import VerifyEmail from './pages/VerifyEmail';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -17,6 +18,10 @@ function ProtectedRoute({ children }) {
   }
   if (!user) {
     return <Navigate to="/" />;
+  }
+  // Require email verification for all protected routes
+  if (!user.emailVerified) {
+    return <Navigate to="/verify-email" />;
   }
   return children;
 }
@@ -40,6 +45,7 @@ function AppRoutes() {
           <Route path="/" element={<PublicRoute><Landing /></PublicRoute>} />
           <Route path="/signin" element={<PublicRoute><SignIn /></PublicRoute>} />
           <Route path="/signup" element={<PublicRoute><SignUp /></PublicRoute>} />
+          <Route path="/verify-email" element={<VerifyEmail />} />
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
           <Route path="/camera" element={<ProtectedRoute><CameraFeed /></ProtectedRoute>} />
           <Route path="/logs" element={<ProtectedRoute><ActivityLogs /></ProtectedRoute>} />

@@ -6,6 +6,7 @@ import {
   signOut,
   GoogleAuthProvider,
   signInWithPopup,
+  sendEmailVerification,
 } from 'firebase/auth';
 import { doc, setDoc, addDoc, collection } from 'firebase/firestore';
 import { serverTimestamp } from 'firebase/firestore';
@@ -69,6 +70,7 @@ export function AuthProvider({ children }) {
     setError(null);
     try {
       const result = await createUserWithEmailAndPassword(auth, email, password);
+      await sendEmailVerification(result.user);
       await setDoc(doc(db, 'users', result.user.uid), {
         firstName,
         lastName,
