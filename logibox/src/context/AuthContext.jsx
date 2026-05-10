@@ -8,8 +8,7 @@ import {
   signInWithPopup,
   sendEmailVerification,
 } from 'firebase/auth';
-import { doc, setDoc, addDoc, collection } from 'firebase/firestore';
-import { serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
 
 const AuthContext = createContext();
@@ -60,10 +59,10 @@ export function AuthProvider({ children }) {
     try {
       const result = await signInWithPopup(auth, new GoogleAuthProvider());
       const firebaseUser = result.user;
-      const isFirstTime = firebaseUser.metadata.creationTime === firebaseUser.metadata.lastSignInTime;
+      const isFirstTime =
+        firebaseUser.metadata.creationTime === firebaseUser.metadata.lastSignInTime;
 
       if (isFirstTime) {
-        // First-time Google sign-in: create fresh user doc
         const displayName = firebaseUser.displayName || '';
         const nameParts = displayName.split(' ');
         const firstName = nameParts[0] || '';
@@ -76,7 +75,7 @@ export function AuthProvider({ children }) {
             lastName,
             photoURL: firebaseUser.photoURL ?? null,
             provider: 'google',
-            createdAt: new Date(),
+            createdAt: serverTimestamp(),
             otpDuration: 5,
             otpAutoExpire: true,
           }, { merge: false });
@@ -84,12 +83,11 @@ export function AuthProvider({ children }) {
           console.error('User profile create error:', e);
         }
       } else {
-        // Returning Google user: update only email/photoURL/lastLoginAt
         try {
           await setDoc(doc(db, 'users', firebaseUser.uid), {
             email: firebaseUser.email,
             photoURL: firebaseUser.photoURL ?? null,
-            lastLoginAt: new Date(),
+            lastLoginAt: serverTimestamp(),
           }, { merge: true });
         } catch (e) {
           console.error('User profile update error:', e);
@@ -113,7 +111,9 @@ export function AuthProvider({ children }) {
           firstName,
           lastName,
           email,
-          createdAt: new Date(),
+          createdAt: serverTimestamp(),
+          otpDuration: 5,
+          otpAutoExpire: true,
         });
       } catch (e) {
         console.error('User profile save error:', e);
