@@ -2,30 +2,71 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // User's own data
-    match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+    // Helper function to validate vault ID
+    function isValidVaultId(vaultId) {
+      return vaultId in ['1', '2', '3'];
+    }
+
+    // Helper function to validate allowed user fields
+    function isValidUserData(data) {
+      let allowed = [
+        'firstName', 'lastName', 'email', 'photoURL',
+        'otpDuration', 'otpAutoExpire', 'lastLoginAt',
+        'profileBackfilled', 'createdAt', 'provider'
+      ];
+      return data.keys().hasAll(['firstName', 'lastName', 'email'])
+        && data.keys().hasOnly(allowed + [
+          'lastOtpGeneratedAt_1', 'lastOtpGeneratedAt_2', 'lastOtpGeneratedAt_3'
+        ]);
+    }
+
+    // Helper function to validate vault fields
+    function isValidVaultData(data) {
+      let validStatuses = ['empty', 'assigned', 'otp_active', 'otp_expired', 'completed'];
+      return data.id is int
+        && data.status is string
+        && data.status in validStatuses
+        && data.enabled is bool;
+    }
+
+    // User profile - authenticated users can only access their own
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if request.auth != null
+        && request.auth.uid == uid
+        && isValidUserData(request.resource.data);
 
       // User's vaults subcollection
       match /vaults/{vaultId} {
-        allow read: if request.auth != null && request.auth.uid == userId;
-
-        allow write: if request.auth != null && request.auth.uid == userId
-          && (
-            // Allow writes that are NOT OTP generation (no otpHash field being set)
-            !('otpHash' in request.resource.data)
-            ||
-            // Allow OTP generation only if no lastOtpGeneratedAt exists yet,
-            // OR if it was more than 60 seconds ago
-            !('lastOtpGeneratedAt' in resource.data)
-            || request.time > resource.data.lastOtpGeneratedAt + duration.value(60, 's')
-          );
+        allow read: if request.auth != null && request.auth.uid == uid;
+        allow create: if request.auth != null
+          && request.auth.uid == uid
+          && isValidVaultId(vaultId)
+          && isValidVaultData(request.resource.data);
+        allow update: if request.auth != null
+          && request.auth.uid == uid
+          && isValidVaultId(vaultId)
+          && isValidVaultData(request.resource.data)
+          // Prevent client from directly modifying otpHash and otpEncrypted
+          && request.resource.data.otpHash == resource.data.otpHash
+          && request.resource.data.otpEncrypted == resource.data.otpEncrypted;
+        allow delete: if request.auth != null && request.auth.uid == uid;
       }
 
-      // User's activityLogs subcollection
+      // User's activityLogs subcollection - append only
       match /activityLogs/{logId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read: if request.auth != null && request.auth.uid == uid;
+        allow create: if request.auth != null
+          && request.auth.uid == uid
+          && request.resource.data.action is string
+          && request.resource.data.timestamp is timestamp;
+        allow update, delete: if false;
       }
+    }
+
+    // Deny everything else by default
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

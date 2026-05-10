@@ -4,8 +4,31 @@ import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { collection, doc, setDoc, onSnapshot, writeBatch, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { generateSecureOTP, hashOTP } from '../utils/otp';
+import { generateSecureOTP, hashOTP, verifyOTPWithServer } from '../utils/otp';
+import { encryptOTP, decryptOTP } from '../utils/crypto';
+import { useVaultTimer } from '../hooks/useVaultTimer';
 import Navbar from '../components/Navbar';
+
+const getSessionStorageKey = (vaultId) => `otp_vault_${vaultId}`;
+
+const saveToSessionStorage = (vaultId, code, expiresAt) => {
+  try {
+    sessionStorage.setItem(getSessionStorageKey(vaultId), JSON.stringify({ code, expiresAt }));
+  } catch (e) { console.error('sessionStorage save failed', e); }
+};
+
+const getFromSessionStorage = (vaultId) => {
+  try {
+    const item = sessionStorage.getItem(getSessionStorageKey(vaultId));
+    return item ? JSON.parse(item) : null;
+  } catch (e) { return null; }
+};
+
+const clearSessionStorage = (vaultId) => {
+  try {
+    sessionStorage.removeItem(getSessionStorageKey(vaultId));
+  } catch (e) { }
+};
 
 function Dashboard() {
   const { logout, user } = useAuth();
@@ -22,6 +45,9 @@ function Dashboard() {
   const [currentOTP, setCurrentOTP] = useState(null);
   const [otpTimeRemaining, setOtpTimeRemaining] = useState(0);
   const [otpCooldowns, setOtpCooldowns] = useState({});
+  const [enteredOTP, setEnteredOTP] = useState('');
+  const [otpVerifyError, setOtpVerifyError] = useState('');
+  const [otpVerifying, setOtpVerifying] = useState(false);
   const OTP_COOLDOWN_MS = 60 * 1000;
   const [deliveryForm, setDeliveryForm] = useState({
     receiverName: '',
@@ -104,22 +130,28 @@ function Dashboard() {
 
     const otp = generateOTP();
     const otpHash = await hashOTP(otp);
+    const otpEncrypted = await encryptOTP(otp, user.uid);
     const now = new Date();
     const expiresAt = new Date(now.getTime() + OTP_DURATION_MS);
+    const nowTimestamp = now.toISOString();
 
     const updatedVault = {
       ...vault,
       otp: null,
       otpHash,
+      otpEncrypted,
       otpStatus: 'active',
-      otpCreatedAt: now.toISOString(),
+      otpCreatedAt: nowTimestamp,
       otpExpiresAt: expiresAt.toISOString(),
-      lastOtpGeneratedAt: now.toISOString(),
+      lastOtpGeneratedAt: nowTimestamp,
     };
 
     await setDoc(doc(db, 'users', user.uid, 'vaults', vault.id.toString()), updatedVault);
-    setOtpCooldowns(prev => ({ ...prev, [vault.id]: Date.now() }));
+    const cooldownTime = Date.now();
+    setOtpCooldowns(prev => ({ ...prev, [vault.id]: cooldownTime }));
+    await setDoc(doc(db, 'users', user.uid), { [`lastOtpGeneratedAt_${vault.id}`]: cooldownTime }, { merge: true });
     setVaultOTPs(prev => ({ ...prev, [vault.id]: otp }));
+    saveToSessionStorage(vault.id, otp, expiresAt.toISOString());
     await logActivity('OTP Generated', `OTP generated for vault ${vault.id}`, vault.id);
 
     setCurrentOTP({
@@ -129,7 +161,7 @@ function Dashboard() {
     });
     setOtpTimeRemaining(OTP_DURATION_MS);
     setShowOTPModal(true);
-  }, [generateOTP, user, OTP_DURATION_MS, logActivity]);
+  }, [generateOTP, user, OTP_DURATION_MS, logActivity, isOtpOnCooldown]);
 
   const handleResetVault = useCallback(async (vaultId) => {
     const emptyVault = {
@@ -142,6 +174,7 @@ function Dashboard() {
       createdAt: null,
       otp: null,
       otpHash: null,
+      otpEncrypted: null,
       otpStatus: null,
       otpCreatedAt: null,
       otpExpiresAt: null,
@@ -153,29 +186,65 @@ function Dashboard() {
       delete updated[vaultId];
       return updated;
     });
+    clearSessionStorage(vaultId);
     await logActivity('Vault Reset', `Vault ${vaultId} was reset to empty`, vaultId);
   }, [user, logActivity]);
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setVaults(prev => prev.map(v => {
-        if (v.otpStatus === 'active' && v.otpExpiresAt) {
-          const now = Date.now();
-          const expiresAt = new Date(v.otpExpiresAt).getTime();
-          if (now >= expiresAt) {
-            setVaultOTPs(prev => {
-              const updated = { ...prev };
-              delete updated[v.id];
-              return updated;
-            });
-            return { ...v, otpStatus: 'expired' };
-          }
+    if (!user) return;
+    const activeVaults = vaults.filter(v => v.otpStatus === 'active' && v.otpExpiresAt);
+    activeVaults.forEach(v => {
+      const now = Date.now();
+      const expiresAt = new Date(v.otpExpiresAt).getTime();
+      if (now >= expiresAt) {
+        setVaultOTPs(prev => {
+          const updated = { ...prev };
+          delete updated[v.id];
+          return updated;
+        });
+        clearSessionStorage(v.id);
+        setDoc(doc(db, 'users', user.uid, 'vaults', v.id.toString()), { otpStatus: 'expired' }, { merge: true });
+      }
+    });
+  }, [user, vaults]);
+
+  useEffect(() => {
+    if (!user || vaults.length === 0) return;
+    const activeVaults = vaults.filter(v => v.otpStatus === 'active' && v.otpExpiresAt);
+    if (activeVaults.length === 0) return;
+
+    const now = Date.now();
+    const toDecrypt = [];
+
+    activeVaults.forEach(v => {
+      const expiresAt = new Date(v.otpExpiresAt).getTime();
+      if (now >= expiresAt) return;
+
+      const sessionData = getFromSessionStorage(v.id);
+      if (sessionData && sessionData.code) {
+        const sessionExpires = new Date(sessionData.expiresAt).getTime();
+        if (sessionExpires > now) {
+          setVaultOTPs(prev => ({ ...prev, [v.id]: sessionData.code }));
+        } else {
+          clearSessionStorage(v.id);
+          if (v.otpEncrypted) toDecrypt.push(v);
         }
-        return v;
+      } else if (v.otpEncrypted) {
+        toDecrypt.push(v);
+      }
+    });
+
+    if (toDecrypt.length > 0) {
+      Promise.all(toDecrypt.map(async (v) => {
+        try {
+          const decrypted = await decryptOTP(v.otpEncrypted, user.uid);
+          setVaultOTPs(prev => ({ ...prev, [v.id]: decrypted }));
+        } catch (e) {
+          console.error('Decrypt failed for vault', v.id, e);
+        }
       }));
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
+    }
+  }, [user, vaults]);
 
   useEffect(() => {
     let timerInterval;
@@ -223,6 +292,27 @@ function Dashboard() {
     return () => unsubscribe();
   }, [user]);
 
+  useEffect(() => {
+    if (!user) return;
+    const userRef = doc(db, 'users', user.uid);
+    const unsubscribe = onSnapshot(userRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        const cooldowns = {};
+        for (let i = 1; i <= 3; i++) {
+          const cooldownKey = `lastOtpGeneratedAt_${i}`;
+          if (data[cooldownKey]) {
+            cooldowns[i] = data[cooldownKey];
+          }
+        }
+        if (Object.keys(cooldowns).length > 0) {
+          setOtpCooldowns(prev => ({ ...prev, ...cooldowns }));
+        }
+      }
+    });
+    return () => unsubscribe();
+  }, [user]);
+
   const handleLogout = () => { logout(); navigate('/signin'); };
 
   const openSetDeliveryModal = (vault) => {
@@ -259,7 +349,32 @@ function Dashboard() {
   };
 
   const handleConfirmWithWarning = async () => {
+    if (!enteredOTP.trim()) {
+      setOtpVerifyError('Please enter the OTP');
+      return;
+    }
+    setOtpVerifying(true);
+    setOtpVerifyError('');
+
+    const result = await verifyOTPWithServer(selectedVault.id, enteredOTP);
+
+    if (!result.success) {
+      setOtpVerifying(false);
+      if (result.code === 'deadline-exceeded') {
+        setOtpVerifyError('OTP has expired, please regenerate');
+      } else if (result.code === 'permission-denied') {
+        setOtpVerifyError('Incorrect OTP, please try again');
+      } else {
+        setOtpVerifyError('Verification failed, please try again');
+      }
+      return;
+    }
+
     setShowWarningModal(false);
+    setEnteredOTP('');
+    setOtpVerifyError('');
+    setOtpVerifying(false);
+
     const updatedVault = {
       ...selectedVault,
       status: 'completed',
@@ -761,10 +876,23 @@ function Dashboard() {
               <p style={{ ...styles.warningText, marginBottom: '0.5rem' }}>
                 The vault will open automatically. Make sure the rider is ready to collect the parcel.
               </p>
-              <button className="btn-animate" style={{ ...styles.confirmBtn, minHeight: 48, fontSize: '1rem' }} onClick={handleConfirmWithWarning}>
-                Confirm & Open Vault
+              <div style={{ marginBottom: '1rem' }}>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={6}
+                  style={{ ...styles.formInput, textAlign: 'center', letterSpacing: '8px', fontSize: '1.5rem' }}
+                  placeholder="Enter OTP"
+                  value={enteredOTP}
+                  onChange={(e) => setEnteredOTP(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                />
+                {otpVerifyError && <p style={{ color: '#dc2626', fontSize: '0.875rem', marginTop: '0.5rem', textAlign: 'center' }}>{otpVerifyError}</p>}
+              </div>
+              <button className="btn-animate" style={{ ...styles.confirmBtn, minHeight: 48, fontSize: '1rem' }} onClick={handleConfirmWithWarning} disabled={otpVerifying}>
+                {otpVerifying ? 'Verifying...' : 'Confirm & Open Vault'}
               </button>
-              <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44, width: '100%' }} onClick={() => setShowWarningModal(false)}>
+              <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44, width: '100%' }} onClick={() => { setShowWarningModal(false); setEnteredOTP(''); setOtpVerifyError(''); }}>
                 Cancel
               </button>
             </div>
@@ -792,12 +920,25 @@ function Dashboard() {
                   <p style={styles.warningText}>The vault will open automatically. Make sure the rider is ready to collect the parcel.</p>
                 </div>
               </div>
+              <div style={{ marginBottom: '1rem', padding: '0 1.5rem' }}>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={6}
+                  style={{ ...styles.formInput, textAlign: 'center', letterSpacing: '8px', fontSize: '1.5rem' }}
+                  placeholder="Enter OTP"
+                  value={enteredOTP}
+                  onChange={(e) => setEnteredOTP(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                />
+                {otpVerifyError && <p style={{ color: '#dc2626', fontSize: '0.875rem', marginTop: '0.5rem', textAlign: 'center' }}>{otpVerifyError}</p>}
+              </div>
               <div style={{ ...r.modalFooter, flexDirection: 'column' }}>
-                <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44 }} onClick={() => setShowWarningModal(false)}>
+                <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44 }} onClick={() => { setShowWarningModal(false); setEnteredOTP(''); setOtpVerifyError(''); }}>
                   Cancel
                 </button>
-                <button className="btn-animate" style={{ ...styles.confirmBtn, minHeight: 44 }} onClick={handleConfirmWithWarning}>
-                  Confirm & Open Vault
+                <button className="btn-animate" style={{ ...styles.confirmBtn, minHeight: 44 }} onClick={handleConfirmWithWarning} disabled={otpVerifying}>
+                  {otpVerifying ? 'Verifying...' : 'Confirm & Open Vault'}
                 </button>
               </div>
             </div>

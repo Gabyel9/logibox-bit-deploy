@@ -1,3 +1,5 @@
+import { getFunctions, httpsCallable } from 'firebase/functions';
+
 export function generateSecureOTP() {
   const array = new Uint32Array(1);
   crypto.getRandomValues(array);
@@ -15,4 +17,15 @@ export async function hashOTP(otp) {
 export async function verifyOTP(enteredOTP, storedHash) {
   const enteredHash = await hashOTP(enteredOTP);
   return enteredHash === storedHash;
+}
+
+export async function verifyOTPWithServer(vaultId, enteredOTP) {
+  const functions = getFunctions();
+  const verifyFn = httpsCallable(functions, 'verifyOTPAndOpenVault');
+  try {
+    const result = await verifyFn({ vaultId, enteredOTP });
+    return { success: true, data: result.data };
+  } catch (err) {
+    return { success: false, error: err.message, code: err.code };
+  }
 }

@@ -59,7 +59,44 @@ export function AuthProvider({ children }) {
     setError(null);
     try {
       const result = await signInWithPopup(auth, new GoogleAuthProvider());
-      await logActivity(result.user.uid, 'Login', 'User signed in with Google');
+      const firebaseUser = result.user;
+      const isFirstTime = firebaseUser.metadata.creationTime === firebaseUser.metadata.lastSignInTime;
+
+      if (isFirstTime) {
+        // First-time Google sign-in: create fresh user doc
+        const displayName = firebaseUser.displayName || '';
+        const nameParts = displayName.split(' ');
+        const firstName = nameParts[0] || '';
+        const lastName = nameParts.slice(1).join(' ') || '';
+
+        try {
+          await setDoc(doc(db, 'users', firebaseUser.uid), {
+            email: firebaseUser.email,
+            firstName,
+            lastName,
+            photoURL: firebaseUser.photoURL ?? null,
+            provider: 'google',
+            createdAt: new Date(),
+            otpDuration: 5,
+            otpAutoExpire: true,
+          }, { merge: false });
+        } catch (e) {
+          console.error('User profile create error:', e);
+        }
+      } else {
+        // Returning Google user: update only email/photoURL/lastLoginAt
+        try {
+          await setDoc(doc(db, 'users', firebaseUser.uid), {
+            email: firebaseUser.email,
+            photoURL: firebaseUser.photoURL ?? null,
+            lastLoginAt: new Date(),
+          }, { merge: true });
+        } catch (e) {
+          console.error('User profile update error:', e);
+        }
+      }
+
+      await logActivity(firebaseUser.uid, 'Login', 'User signed in with Google');
     } catch (err) {
       setError(err.message);
       throw err;
@@ -71,13 +108,21 @@ export function AuthProvider({ children }) {
     try {
       const result = await createUserWithEmailAndPassword(auth, email, password);
       await sendEmailVerification(result.user);
-      await setDoc(doc(db, 'users', result.user.uid), {
-        firstName,
-        lastName,
-        email,
-        createdAt: new Date(),
-      });
-      await logActivity(result.user.uid, 'Login', 'User created account');
+      try {
+        await setDoc(doc(db, 'users', result.user.uid), {
+          firstName,
+          lastName,
+          email,
+          createdAt: new Date(),
+        });
+      } catch (e) {
+        console.error('User profile save error:', e);
+      }
+      try {
+        await logActivity(result.user.uid, 'Login', 'User created account');
+      } catch (e) {
+        console.error('Activity log error:', e);
+      }
     } catch (err) {
       setError(err.message);
       throw err;

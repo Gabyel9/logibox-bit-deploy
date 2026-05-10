@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { useAuth } from './AuthContext';
+import { auth } from '../config/firebase';
 
 const SettingsContext = createContext();
 
@@ -29,7 +30,7 @@ export function SettingsProvider({ children }) {
     if (!user) return;
 
     const userRef = doc(db, 'users', user.uid);
-    const unsubscribe = onSnapshot(userRef, (snap) => {
+    const unsubscribe = onSnapshot(userRef, async (snap) => {
       if (snap.exists()) {
         const data = snap.data();
         setSettings({
@@ -39,6 +40,24 @@ export function SettingsProvider({ children }) {
           lastName: data.lastName ?? '',
           email: data.email ?? '',
         });
+
+        // Backfill legacy users missing firstName (e.g., Google users without profile)
+        if (!data.firstName && !data.profileBackfilled && auth.currentUser?.displayName) {
+          const displayName = auth.currentUser.displayName;
+          const nameParts = displayName.split(' ');
+          const firstName = nameParts[0] || '';
+          const lastName = nameParts.slice(1).join(' ') || '';
+
+          try {
+            await setDoc(userRef, {
+              firstName,
+              lastName,
+              profileBackfilled: true,
+            }, { merge: true });
+          } catch (e) {
+            console.error('Profile backfill error:', e);
+          }
+        }
       }
       setSettingsLoading(false);
     });
