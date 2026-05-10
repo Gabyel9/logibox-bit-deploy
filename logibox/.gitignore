@@ -44,3 +44,5 @@ ui-debug.log
 *.sln
 *.sw?
 *.local
+# Claude editor
+.claude/
