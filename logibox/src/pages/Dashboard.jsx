@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { collection, doc, setDoc, onSnapshot, writeBatch, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { generateSecureOTP, hashOTP, verifyOTPWithServer } from '../utils/otp';
+import { generateSecureOTP, hashOTP } from '../utils/otp';
 import { encryptOTP, decryptOTP } from '../utils/crypto';
 import { useVaultTimer } from '../hooks/useVaultTimer';
 import Navbar from '../components/Navbar';
@@ -43,11 +43,12 @@ function Dashboard() {
   const [selectedVault, setSelectedVault] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
   const [currentOTP, setCurrentOTP] = useState(null);
-  const [otpTimeRemaining, setOtpTimeRemaining] = useState(0);
   const [otpCooldowns, setOtpCooldowns] = useState({});
-  const [enteredOTP, setEnteredOTP] = useState('');
-  const [otpVerifyError, setOtpVerifyError] = useState('');
-  const [otpVerifying, setOtpVerifying] = useState(false);
+
+  const { msRemaining: otpTimeRemaining } = useVaultTimer(
+    currentOTP?.expiresAt ?? null,
+    () => { setShowOTPModal(false); setCurrentOTP(null); }
+  );
   const OTP_COOLDOWN_MS = 60 * 1000;
   const [deliveryForm, setDeliveryForm] = useState({
     receiverName: '',
@@ -159,7 +160,6 @@ function Dashboard() {
       expiresAt: expiresAt.toISOString(),
       vaultId: vault.id,
     });
-    setOtpTimeRemaining(OTP_DURATION_MS);
     setShowOTPModal(true);
   }, [generateOTP, user, OTP_DURATION_MS, logActivity, isOtpOnCooldown]);
 
@@ -247,26 +247,8 @@ function Dashboard() {
   }, [user, vaults]);
 
   useEffect(() => {
-    let timerInterval;
-    if (showOTPModal && otpTimeRemaining > 0) {
-      timerInterval = setInterval(() => {
-        setOtpTimeRemaining(prev => {
-          const newTime = prev - 1000;
-          if (newTime <= 0) {
-            clearInterval(timerInterval);
-            setShowOTPModal(false);
-            return 0;
-          }
-          return newTime;
-        });
-      }, 1000);
-    }
-    return () => clearInterval(timerInterval);
-  }, [showOTPModal, otpTimeRemaining]);
-
-  useEffect(() => {
     const total = vaults
-      .filter(v => v.status === 'assigned' || v.status === 'otp_active' || v.status === 'otp_expired')
+      .filter(v => ['assigned', 'otp_active', 'otp_expired', 'occupied'].includes(v.status))
       .reduce((sum, v) => sum + (parseFloat(v.deliveryFee) || 0), 0);
     setCashLoaded(total);
   }, [vaults]);
@@ -349,39 +331,25 @@ function Dashboard() {
   };
 
   const handleConfirmWithWarning = async () => {
-    if (!enteredOTP.trim()) {
-      setOtpVerifyError('Please enter the OTP');
-      return;
-    }
-    setOtpVerifying(true);
-    setOtpVerifyError('');
-
-    const result = await verifyOTPWithServer(selectedVault.id, enteredOTP);
-
-    if (!result.success) {
-      setOtpVerifying(false);
-      if (result.code === 'deadline-exceeded') {
-        setOtpVerifyError('OTP has expired, please regenerate');
-      } else if (result.code === 'permission-denied') {
-        setOtpVerifyError('Incorrect OTP, please try again');
-      } else {
-        setOtpVerifyError('Verification failed, please try again');
-      }
-      return;
-    }
-
     setShowWarningModal(false);
-    setEnteredOTP('');
-    setOtpVerifyError('');
-    setOtpVerifying(false);
 
     const updatedVault = {
       ...selectedVault,
       status: 'completed',
       completedAt: new Date().toISOString(),
     };
-    await setDoc(doc(db, 'users', user.uid, 'vaults', selectedVault.id.toString()), updatedVault);
-    await logActivity('Delivery Confirmed', `Delivery confirmed for vault ${selectedVault.id}`, selectedVault.id);
+
+    await setDoc(
+      doc(db, 'users', user.uid, 'vaults', selectedVault.id.toString()),
+      updatedVault
+    );
+
+    await logActivity(
+      'Delivery Confirmed',
+      `Delivery confirmed for vault ${selectedVault.id}`,
+      selectedVault.id
+    );
+
     setTimeout(() => handleResetVault(selectedVault.id), 1500);
   };
 
@@ -395,7 +363,6 @@ function Dashboard() {
   const closeOTPModal = () => {
     setShowOTPModal(false);
     setCurrentOTP(null);
-    setOtpTimeRemaining(0);
   };
 
   const filteredVaults = vaults.filter(v => {
@@ -403,13 +370,13 @@ function Dashboard() {
     if (!isEnabled) return false;
     if (activeFilter === 'all') return true;
     if (activeFilter === 'empty') return v.status === 'empty';
-    if (activeFilter === 'occupied') return ['assigned', 'otp_active', 'otp_expired'].includes(v.status);
+    if (activeFilter === 'occupied') return ['assigned', 'otp_active', 'otp_expired', 'occupied'].includes(v.status);
     return v.status === activeFilter;
   });
 
   const enabledVaults = vaults.filter(v => v.enabled !== false);
   const assignedCount = enabledVaults.filter(v => v.status !== 'empty').length;
-  const occupiedCount = enabledVaults.filter(v => ['assigned', 'otp_active', 'otp_expired'].includes(v.status)).length;
+  const occupiedCount = enabledVaults.filter(v => ['assigned', 'otp_active', 'otp_expired', 'occupied'].includes(v.status)).length;
   const activeOTPCount = enabledVaults.filter(v => v.otpStatus === 'active').length;
 
   const formatTime = (ms) => {
@@ -562,10 +529,10 @@ function Dashboard() {
                         </div>
                         <span style={{
                           ...styles.vaultBadge,
-                          backgroundColor: vault.status === 'empty' ? '#e5e7eb' : vault.status === 'completed' ? '#d1fae5' : '#fee2e2',
-                          color: vault.status === 'empty' ? '#6b7280' : vault.status === 'completed' ? '#059669' : '#8B0000',
+                          backgroundColor: vault.status === 'empty' ? '#e5e7eb' : vault.status === 'completed' ? '#d1fae5' : vault.status === 'occupied' ? '#ede9fe' : '#fee2e2',
+                          color: vault.status === 'empty' ? '#6b7280' : vault.status === 'completed' ? '#059669' : vault.status === 'occupied' ? '#7c3aed' : '#8B0000',
                         }}>
-                          {vault.status === 'empty' ? 'Empty' : vault.status === 'completed' ? 'Completed' : 'Occupied'}
+                          {vault.status === 'empty' ? 'Empty' : vault.status === 'completed' ? 'Completed' : vault.status === 'occupied' ? 'Occupied' : 'Assigned'}
                         </span>
                       </div>
 
@@ -590,7 +557,7 @@ function Dashboard() {
                         </div>
                       )}
 
-                      {(vault.status === 'assigned' || vault.status === 'otp_active' || vault.status === 'otp_expired') && (
+                      {(vault.status === 'assigned' || vault.status === 'otp_active' || vault.status === 'otp_expired' || vault.status === 'occupied') && (
                         <div style={styles.vaultContent}>
                           <div style={styles.vaultDetails}>
                             <div style={styles.detailGrid}>
@@ -607,7 +574,7 @@ function Dashboard() {
                               ))}
                             </div>
 
-                            {!vault.otpHash && (
+                            {!vault.otpHash && vault.status !== 'occupied' && (
                               <button
                                 className="btn-animate"
                                 style={{
@@ -693,6 +660,20 @@ function Dashboard() {
                                   Regenerate OTP
                                 </button>
                               </>
+                            )}
+
+                            {vault.status === 'occupied' && (
+                              <div style={{
+                                backgroundColor: '#ede9fe',
+                                borderRadius: 10,
+                                padding: '0.875rem',
+                                textAlign: 'center',
+                                color: '#7c3aed',
+                                fontWeight: 700,
+                                fontSize: '0.875rem',
+                              }}>
+                                Parcel inside — waiting for recipient to collect
+                              </div>
                             )}
                           </div>
 
@@ -874,25 +855,12 @@ function Dashboard() {
               </div>
               <h3 style={{ ...styles.modalTitle, textAlign: 'center' }}>Warning</h3>
               <p style={{ ...styles.warningText, marginBottom: '0.5rem' }}>
-                The vault will open automatically. Make sure the rider is ready to collect the parcel.
+                The vault will open automatically. Please make sure the rider is present before confirming.
               </p>
-              <div style={{ marginBottom: '1rem' }}>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={6}
-                  style={{ ...styles.formInput, textAlign: 'center', letterSpacing: '8px', fontSize: '1.5rem' }}
-                  placeholder="Enter OTP"
-                  value={enteredOTP}
-                  onChange={(e) => setEnteredOTP(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                />
-                {otpVerifyError && <p style={{ color: '#dc2626', fontSize: '0.875rem', marginTop: '0.5rem', textAlign: 'center' }}>{otpVerifyError}</p>}
-              </div>
-              <button className="btn-animate" style={{ ...styles.confirmBtn, minHeight: 48, fontSize: '1rem' }} onClick={handleConfirmWithWarning} disabled={otpVerifying}>
-                {otpVerifying ? 'Verifying...' : 'Confirm & Open Vault'}
+              <button className="btn-animate" style={{ ...styles.confirmBtn, minHeight: 48, fontSize: '1rem' }} onClick={handleConfirmWithWarning}>
+                Confirm & Open Vault
               </button>
-              <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44, width: '100%' }} onClick={() => { setShowWarningModal(false); setEnteredOTP(''); setOtpVerifyError(''); }}>
+              <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44, width: '100%' }} onClick={() => setShowWarningModal(false)}>
                 Cancel
               </button>
             </div>
@@ -917,28 +885,15 @@ function Dashboard() {
                       <line x1="12" y1="17" x2="12.01" y2="17"/>
                     </svg>
                   </div>
-                  <p style={styles.warningText}>The vault will open automatically. Make sure the rider is ready to collect the parcel.</p>
+                  <p style={styles.warningText}>The vault will open automatically. Please make sure the rider is present before confirming.</p>
                 </div>
               </div>
-              <div style={{ marginBottom: '1rem', padding: '0 1.5rem' }}>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={6}
-                  style={{ ...styles.formInput, textAlign: 'center', letterSpacing: '8px', fontSize: '1.5rem' }}
-                  placeholder="Enter OTP"
-                  value={enteredOTP}
-                  onChange={(e) => setEnteredOTP(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                />
-                {otpVerifyError && <p style={{ color: '#dc2626', fontSize: '0.875rem', marginTop: '0.5rem', textAlign: 'center' }}>{otpVerifyError}</p>}
-              </div>
               <div style={{ ...r.modalFooter, flexDirection: 'column' }}>
-                <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44 }} onClick={() => { setShowWarningModal(false); setEnteredOTP(''); setOtpVerifyError(''); }}>
+                <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44 }} onClick={() => setShowWarningModal(false)}>
                   Cancel
                 </button>
-                <button className="btn-animate" style={{ ...styles.confirmBtn, minHeight: 44 }} onClick={handleConfirmWithWarning} disabled={otpVerifying}>
-                  {otpVerifying ? 'Verifying...' : 'Confirm & Open Vault'}
+                <button className="btn-animate" style={{ ...styles.confirmBtn, minHeight: 44 }} onClick={handleConfirmWithWarning}>
+                  Confirm & Open Vault
                 </button>
               </div>
             </div>

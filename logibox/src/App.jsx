@@ -10,6 +10,7 @@ import Landing from './pages/Landing';
 import SignIn from './pages/SignIn';
 import SignUp from './pages/SignUp';
 import VerifyEmail from './pages/VerifyEmail';
+import LockerSimulator from './pages/LockerSimulator';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -51,6 +52,7 @@ function AppRoutes() {
           <Route path="/logs" element={<ProtectedRoute><ActivityLogs /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
           <Route path="/help" element={<ProtectedRoute><Help /></ProtectedRoute>} />
+          <Route path="/simulator" element={<ProtectedRoute><LockerSimulator /></ProtectedRoute>} />
         </Routes>
       </main>
     </div>

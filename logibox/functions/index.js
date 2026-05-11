@@ -1,4 +1,4 @@
-const { functions, httpsCallable } = require('firebase-functions');
+const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { initializeApp, cert } = require('firebase-admin/app');
 const { getFirestore } = require('firebase-admin/firestore');
 const crypto = require('crypto');
@@ -7,12 +7,12 @@ const crypto = require('crypto');
 initializeApp();
 const db = getFirestore();
 
-exports.verifyOTPAndOpenVault = httpsCallable(async (req, res) => {
-  const { uid, vaultId, enteredOTP } = req.data;
+exports.verifyOTPAndOpenVault = onCall(async (request) => {
+  const { uid, vaultId, enteredOTP } = request.data;
 
   // STEP 1 — Auth check
-  if (!req.auth || req.auth.uid !== uid) {
-    throw new functions.https.HttpsError('unauthenticated', 'Not authorized');
+  if (!request.auth || request.auth.uid !== uid) {
+    throw new HttpsError('unauthenticated', 'Not authorized');
   }
 
   // STEP 2 — Fetch vault doc
@@ -20,13 +20,13 @@ exports.verifyOTPAndOpenVault = httpsCallable(async (req, res) => {
   const vaultDoc = await vaultRef.get();
 
   if (!vaultDoc.exists) {
-    throw new functions.https.HttpsError('not-found', 'Vault not found');
+    throw new HttpsError('not-found', 'Vault not found');
   }
 
   const vault = vaultDoc.data();
 
   if (vault.otpStatus !== 'active') {
-    throw new functions.https.HttpsError('failed-precondition', 'OTP is not active');
+    throw new HttpsError('failed-precondition', 'OTP is not active');
   }
 
   // STEP 3 — Check expiry
@@ -35,7 +35,7 @@ exports.verifyOTPAndOpenVault = httpsCallable(async (req, res) => {
 
   if (now >= expiresAt) {
     await vaultRef.update({ otpStatus: 'expired' });
-    throw new functions.https.HttpsError('deadline-exceeded', 'OTP has expired');
+    throw new HttpsError('deadline-exceeded', 'OTP has expired');
   }
 
   // STEP 4 — Verify OTP hash
@@ -49,7 +49,7 @@ exports.verifyOTPAndOpenVault = httpsCallable(async (req, res) => {
       vaultId: parseInt(vaultId),
       timestamp: new Date(),
     });
-    throw new functions.https.HttpsError('permission-denied', 'Invalid OTP');
+    throw new HttpsError('permission-denied', 'Invalid OTP');
   }
 
   // STEP 5 — Success

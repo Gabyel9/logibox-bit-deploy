@@ -78,7 +78,7 @@ export function AuthProvider({ children }) {
             createdAt: serverTimestamp(),
             otpDuration: 5,
             otpAutoExpire: true,
-          }, { merge: false });
+          }, { merge: true });
         } catch (e) {
           console.error('User profile create error:', e);
         }

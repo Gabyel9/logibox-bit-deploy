@@ -7,34 +7,55 @@ service cloud.firestore {
       return vaultId in ['1', '2', '3'];
     }
 
-    // Helper function to validate allowed user fields
-    function isValidUserData(data) {
+    // Helper function to validate user fields for create
+    function isValidUserCreate(data) {
       let allowed = [
         'firstName', 'lastName', 'email', 'photoURL',
         'otpDuration', 'otpAutoExpire', 'lastLoginAt',
-        'profileBackfilled', 'createdAt', 'provider'
+        'profileBackfilled', 'createdAt', 'provider',
+        'lastOtpGeneratedAt_1', 'lastOtpGeneratedAt_2', 'lastOtpGeneratedAt_3'
       ];
-      return data.keys().hasAll(['firstName', 'lastName', 'email'])
-        && data.keys().hasOnly(allowed + [
-          'lastOtpGeneratedAt_1', 'lastOtpGeneratedAt_2', 'lastOtpGeneratedAt_3'
-        ]);
+      return data.keys().hasOnly(allowed)
+        && data.keys().hasAny(['email', 'firstName', 'lastName']);
+    }
+
+    // Helper function to validate user fields for update
+    function isValidUserUpdate(data) {
+      let allowed = [
+        'firstName', 'lastName', 'email', 'photoURL',
+        'otpDuration', 'otpAutoExpire', 'lastLoginAt',
+        'profileBackfilled', 'createdAt', 'provider',
+        'lastOtpGeneratedAt_1', 'lastOtpGeneratedAt_2', 'lastOtpGeneratedAt_3'
+      ];
+      return request.resource.data.keys().hasOnly(allowed);
     }
 
     // Helper function to validate vault fields
     function isValidVaultData(data) {
-      let validStatuses = ['empty', 'assigned', 'otp_active', 'otp_expired', 'completed'];
-      return data.id is int
+      let validStatuses = ['empty', 'assigned', 'otp_active', 'otp_expired', 'completed', 'occupied'];
+      let validOtpStatuses = ['active', 'expired'];
+      let allowed = [
+        'id', 'status', 'enabled',
+        'receiverName', 'contactNumber', 'parcelInfo', 'deliveryFee', 'createdAt',
+        'otp', 'otpHash', 'otpEncrypted', 'otpStatus', 'otpCreatedAt', 'otpExpiresAt',
+        'lastOtpGeneratedAt', 'completedAt'
+      ];
+      return data.keys().hasOnly(allowed)
         && data.status is string
         && data.status in validStatuses
-        && data.enabled is bool;
+        && (!('enabled' in data) || data.enabled is bool)
+        && (!('otpStatus' in data) || data.otpStatus == null || data.otpStatus in validOtpStatuses);
     }
 
     // User profile - authenticated users can only access their own
     match /users/{uid} {
       allow read: if request.auth != null && request.auth.uid == uid;
-      allow write: if request.auth != null
+      allow create: if request.auth != null
         && request.auth.uid == uid
-        && isValidUserData(request.resource.data);
+        && isValidUserCreate(request.resource.data);
+      allow update: if request.auth != null
+        && request.auth.uid == uid
+        && isValidUserUpdate(request.resource.data);
 
       // User's vaults subcollection
       match /vaults/{vaultId} {
@@ -46,10 +67,7 @@ service cloud.firestore {
         allow update: if request.auth != null
           && request.auth.uid == uid
           && isValidVaultId(vaultId)
-          && isValidVaultData(request.resource.data)
-          // Prevent client from directly modifying otpHash and otpEncrypted
-          && request.resource.data.otpHash == resource.data.otpHash
-          && request.resource.data.otpEncrypted == resource.data.otpEncrypted;
+          && isValidVaultData(request.resource.data);
         allow delete: if request.auth != null && request.auth.uid == uid;
       }
 
