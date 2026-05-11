@@ -30,6 +30,14 @@ const clearSessionStorage = (vaultId) => {
   } catch (e) { }
 };
 
+function useTick(intervalMs = 1000) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+}
+
 function Dashboard() {
   const { logout, user } = useAuth();
   const { settings } = useSettings();
@@ -59,6 +67,8 @@ function Dashboard() {
   const [vaults, setVaults] = useState([]);
   const [vaultsLoading, setVaultsLoading] = useState(true);
   const [vaultOTPs, setVaultOTPs] = useState({});
+
+  useTick();
 
   const OTP_DURATION_MS = (settings.otpDuration ?? 5) * 60 * 1000;
 
@@ -594,7 +604,7 @@ function Dashboard() {
 
                             {vault.otpHash && isActive && currentOTP && (
                               <>
-                                <div style={styles.otpWrap}>
+                                <div style={{ ...styles.otpWrap, cursor: 'pointer' }} onClick={() => setShowOTPModal(true)}>
                                   <div>
                                     <div style={styles.otpLabel}>OTP</div>
                                     <div className="otp-active-pulse" style={{ ...styles.otpValue, fontSize: isMobile ? '1.25rem' : '1.5rem' }}>
@@ -622,7 +632,18 @@ function Dashboard() {
 
                             {vault.otpHash && isActive && !currentOTP && (
                               <>
-                                <div style={styles.otpWrap}>
+                                <div
+                                  style={{ ...styles.otpWrap, cursor: 'pointer' }}
+                                  onClick={() => {
+                                    if (!vaultOTPs[vault.id]) return;
+                                    setCurrentOTP({
+                                      code: vaultOTPs[vault.id],
+                                      expiresAt: vault.otpExpiresAt,
+                                      vaultId: vault.id,
+                                    });
+                                    setShowOTPModal(true);
+                                  }}
+                                >
                                   <div>
                                     <div style={styles.otpLabel}>OTP</div>
                                     <div className="otp-active-pulse" style={{
@@ -678,7 +699,7 @@ function Dashboard() {
                           </div>
 
                           <div style={r.vaultActions}>
-                            {vault.otpStatus !== 'active' && (
+                            {vault.otpStatus !== 'active' && vault.status !== 'occupied' && (
                               <button
                                 className="btn-animate"
                                 style={{ ...styles.resetVaultBtn, minHeight: 44, width: isMobile ? '100%' : 'auto' }}
