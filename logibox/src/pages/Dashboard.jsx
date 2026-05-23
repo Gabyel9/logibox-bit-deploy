@@ -46,6 +46,7 @@ function Dashboard() {
   const [cashLoaded, setCashLoaded] = useState(0);
   const [activeFilter, setActiveFilter] = useState('all');
   const [showSetDeliveryModal, setShowSetDeliveryModal] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showWarningModal, setShowWarningModal] = useState(false);
   const [showOTPModal, setShowOTPModal] = useState(false);
   const [selectedVault, setSelectedVault] = useState(null);
@@ -53,10 +54,16 @@ function Dashboard() {
   const [currentOTP, setCurrentOTP] = useState(null);
   const [otpCooldowns, setOtpCooldowns] = useState({});
 
+  const closeAndClearOTP = useCallback(() => {
+    setShowOTPModal(false);
+    setCurrentOTP(null);
+  }, []);
+
   const { msRemaining: otpTimeRemaining } = useVaultTimer(
     currentOTP?.expiresAt ?? null,
-    () => { setShowOTPModal(false); setCurrentOTP(null); }
+    () => { closeAndClearOTP(); }
   );
+
   const OTP_COOLDOWN_MS = 60 * 1000;
   const [deliveryForm, setDeliveryForm] = useState({
     receiverName: '',
@@ -64,6 +71,7 @@ function Dashboard() {
     parcelInfo: '',
     deliveryFee: '',
   });
+  const [formErrors, setFormErrors] = useState({});
   const [vaults, setVaults] = useState([]);
   const [vaultsLoading, setVaultsLoading] = useState(true);
   const [vaultOTPs, setVaultOTPs] = useState({});
@@ -80,7 +88,7 @@ function Dashboard() {
   }, []);
 
   useEffect(() => {
-    const anyModalOpen = showSetDeliveryModal || showWarningModal || showOTPModal;
+    const anyModalOpen = showSetDeliveryModal || showConfirmModal || showWarningModal || showOTPModal;
     if (isMobile && anyModalOpen) {
       document.body.style.overflow = 'hidden';
       document.body.style.position = 'fixed';
@@ -95,7 +103,7 @@ function Dashboard() {
       document.body.style.position = '';
       document.body.style.width = '';
     };
-  }, [isMobile, showSetDeliveryModal, showWarningModal, showOTPModal]);
+  }, [isMobile, showSetDeliveryModal, showConfirmModal, showWarningModal, showOTPModal]);
 
   const isOtpOnCooldown = useCallback((vaultId) => {
     const last = otpCooldowns[vaultId];
@@ -214,9 +222,10 @@ function Dashboard() {
         });
         clearSessionStorage(v.id);
         setDoc(doc(db, 'users', user.uid, 'vaults', v.id.toString()), { otpStatus: 'expired' }, { merge: true });
+        logActivity('OTP Expired', `OTP expired for Vault ${v.id}`, v.id);
       }
     });
-  }, [user, vaults]);
+  }, [user, vaults, logActivity]);
 
   useEffect(() => {
     if (!user || vaults.length === 0) return;
@@ -310,29 +319,76 @@ function Dashboard() {
   const openSetDeliveryModal = (vault) => {
     setSelectedVault(vault);
     setDeliveryForm({ receiverName: '', contactNumber: '', parcelInfo: '', deliveryFee: '' });
+    setFormErrors({});
     setShowSetDeliveryModal(true);
   };
 
   const handleSaveDelivery = async () => {
-    if (!deliveryForm.receiverName || !deliveryForm.contactNumber || !deliveryForm.parcelInfo || !deliveryForm.deliveryFee) return;
+    const errors = {};
 
+    if (!deliveryForm.receiverName || !deliveryForm.receiverName.trim()) {
+      errors.receiverName = 'Receiver name is required';
+    }
+
+    if (!deliveryForm.contactNumber) {
+      errors.contactNumber = 'Contact number is required';
+    } else if (!/^\d+$/.test(deliveryForm.contactNumber)) {
+      errors.contactNumber = 'Numbers only';
+    } else if (deliveryForm.contactNumber.length !== 11) {
+      errors.contactNumber = 'Must be exactly 11 digits';
+    } else if (!deliveryForm.contactNumber.startsWith('09')) {
+      errors.contactNumber = 'Must start with 09';
+    }
+
+    if (!deliveryForm.parcelInfo || !deliveryForm.parcelInfo.trim()) {
+      errors.parcelInfo = 'Parcel info is required';
+    }
+
+    if (!deliveryForm.deliveryFee) {
+      errors.deliveryFee = 'Delivery fee is required';
+    } else if (!/^\d+$/.test(deliveryForm.deliveryFee)) {
+      errors.deliveryFee = 'Numbers only';
+    } else if (parseFloat(deliveryForm.deliveryFee) <= 0) {
+      errors.deliveryFee = 'Must be greater than 0';
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors);
+      return false;
+    }
+
+    return true;
+  };
+
+  const handleContinueToConfirm = async () => {
+    const isValid = await handleSaveDelivery();
+    if (isValid) {
+      setShowSetDeliveryModal(false);
+      setShowConfirmModal(true);
+    }
+  };
+
+  const handleAssignParcel = async () => {
     const updatedVault = {
       ...selectedVault,
       status: 'assigned',
-      receiverName: deliveryForm.receiverName,
+      receiverName: deliveryForm.receiverName.trim(),
       contactNumber: deliveryForm.contactNumber,
-      parcelInfo: deliveryForm.parcelInfo,
+      parcelInfo: deliveryForm.parcelInfo.trim(),
       deliveryFee: parseFloat(deliveryForm.deliveryFee),
       createdAt: new Date().toISOString(),
     };
 
     await setDoc(doc(db, 'users', user.uid, 'vaults', selectedVault.id.toString()), updatedVault);
     await logActivity('Vault Assigned', `Delivery assigned to ${deliveryForm.receiverName} for vault ${selectedVault.id}`, selectedVault.id);
-    setShowSetDeliveryModal(false);
+    setFormErrors({});
+    setShowConfirmModal(false);
+    setDeliveryForm({ receiverName: '', contactNumber: '', parcelInfo: '', deliveryFee: '' });
   };
 
   const handleModalReset = () => {
     setDeliveryForm({ receiverName: '', contactNumber: '', parcelInfo: '', deliveryFee: '' });
+    setFormErrors({});
   };
 
   const openConfirmWarningModal = (vault) => {
@@ -371,8 +427,7 @@ function Dashboard() {
   };
 
   const closeOTPModal = () => {
-    setShowOTPModal(false);
-    setCurrentOTP(null);
+    closeAndClearOTP();
   };
 
   const filteredVaults = vaults.filter(v => {
@@ -380,14 +435,19 @@ function Dashboard() {
     if (!isEnabled) return false;
     if (activeFilter === 'all') return true;
     if (activeFilter === 'empty') return v.status === 'empty';
-    if (activeFilter === 'occupied') return ['assigned', 'otp_active', 'otp_expired', 'occupied'].includes(v.status);
+    if (activeFilter === 'assigned') return v.status === 'assigned';
+    if (activeFilter === 'occupied') return v.status === 'occupied';
     return v.status === activeFilter;
   });
 
   const enabledVaults = vaults.filter(v => v.enabled !== false);
-  const assignedCount = enabledVaults.filter(v => v.status !== 'empty').length;
-  const occupiedCount = enabledVaults.filter(v => ['assigned', 'otp_active', 'otp_expired', 'occupied'].includes(v.status)).length;
-  const activeOTPCount = enabledVaults.filter(v => v.otpStatus === 'active').length;
+  const assignedCount = enabledVaults.filter(v => v.status === 'assigned').length;
+  const occupiedCount = enabledVaults.filter(v => v.status === 'occupied').length;
+  const activeOTPCount = enabledVaults.filter(v => {
+    if (v.otpStatus !== 'active') return false;
+    if (!v.otpExpiresAt) return false;
+    return new Date(v.otpExpiresAt).getTime() > Date.now();
+  }).length;
 
   const formatTime = (ms) => {
     const totalSeconds = Math.floor(ms / 1000);
@@ -497,12 +557,33 @@ function Dashboard() {
             ))}
           </div>
 
+          {/* Reminder Banner */}
+          <div style={{
+            display: 'flex',
+            gap: '0.75rem',
+            alignItems: 'flex-start',
+            backgroundColor: '#fffbeb',
+            border: '1px solid #fde68a',
+            borderRadius: '10px',
+            padding: '0.875rem 1rem',
+            marginBottom: '1.5rem',
+          }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 1 }}>
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/>
+              <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            <p style={{ fontSize: '0.8125rem', color: '#92400e', lineHeight: 1.6, margin: 0 }}>
+              Please make sure you have <span style={{ color: '#8B0000', fontWeight: 700 }}>deposited the payment</span> and <span style={{ color: '#8B0000', fontWeight: 700 }}>send the proof</span> to the delivery riders!
+            </p>
+          </div>
+
           {/* Vault Section */}
           <div style={styles.vaultSection}>
             <div style={styles.vaultSectionHeader}>
               <h2 style={styles.sectionTitle}>Vaults</h2>
               <div style={{ display: 'flex', gap: '0.5rem', overflowX: 'auto', flexWrap: 'nowrap' }}>
-                {['all', 'empty', 'occupied'].map(filter => (
+                {['all', 'empty', 'assigned', 'occupied'].map(filter => (
                   <button
                     key={filter}
                     className="filter-btn-animate"
@@ -539,10 +620,10 @@ function Dashboard() {
                         </div>
                         <span style={{
                           ...styles.vaultBadge,
-                          backgroundColor: vault.status === 'empty' ? '#e5e7eb' : vault.status === 'completed' ? '#d1fae5' : vault.status === 'occupied' ? '#ede9fe' : '#fee2e2',
-                          color: vault.status === 'empty' ? '#6b7280' : vault.status === 'completed' ? '#059669' : vault.status === 'occupied' ? '#7c3aed' : '#8B0000',
+                          backgroundColor: vault.status === 'empty' ? '#e5e7eb' : vault.status === 'completed' ? '#d1fae5' : vault.status === 'assigned' ? '#fee2e2' : vault.status === 'occupied' ? '#ede9fe' : '#e5e7eb',
+                          color: vault.status === 'empty' ? '#6b7280' : vault.status === 'completed' ? '#059669' : vault.status === 'assigned' ? '#8B0000' : vault.status === 'occupied' ? '#7c3aed' : '#6b7280',
                         }}>
-                          {vault.status === 'empty' ? 'Empty' : vault.status === 'completed' ? 'Completed' : vault.status === 'occupied' ? 'Occupied' : 'Assigned'}
+                          {vault.status === 'empty' ? 'Empty' : vault.status === 'completed' ? 'Completed' : vault.status === 'assigned' ? 'Assigned' : vault.status === 'occupied' ? 'Occupied' : 'Unknown'}
                         </span>
                       </div>
 
@@ -567,7 +648,7 @@ function Dashboard() {
                         </div>
                       )}
 
-                      {(vault.status === 'assigned' || vault.status === 'otp_active' || vault.status === 'otp_expired' || vault.status === 'occupied') && (
+                      {(vault.status === 'assigned' || vault.status === 'occupied') && (
                         <div style={styles.vaultContent}>
                           <div style={styles.vaultDetails}>
                             <div style={styles.detailGrid}>
@@ -750,7 +831,7 @@ function Dashboard() {
           <div className="mobile-sheet-enter" style={mobileModalShell}>
             <div style={styles.modalHeader}>
               <h3 style={styles.modalTitle}>Set Delivery — Vault {selectedVault?.id}</h3>
-              <button className="btn-animate" style={styles.closeBtn} onClick={() => setShowSetDeliveryModal(false)}>
+              <button className="btn-animate" style={styles.closeBtn} onClick={() => { setFormErrors({}); setShowSetDeliveryModal(false); }}>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
                 </svg>
@@ -758,23 +839,46 @@ function Dashboard() {
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '1rem', WebkitOverflowScrolling: 'touch' }}>
               {[
-                { label: 'Delivery Rider', key: 'receiverName', placeholder: 'Enter delivery rider name' },
-                { label: 'Contact Number', key: 'contactNumber', placeholder: 'Enter contact number' },
+                { label: 'Receiver Name', key: 'receiverName', placeholder: 'Enter receiver name' },
+                { label: 'Contact Number', key: 'contactNumber', placeholder: 'Enter contact number', numeric: true },
                 { label: 'Parcel Info', key: 'parcelInfo', placeholder: 'Enter parcel description' },
-                { label: 'Delivery Fee (₱)', key: 'deliveryFee', placeholder: '0.00', type: 'number' },
+                { label: 'Delivery Fee (₱)', key: 'deliveryFee', placeholder: '0.00', numeric: true },
               ].map((field, i) => (
                 <div key={i} style={styles.formGroup}>
                   <label style={styles.formLabel}>{field.label}</label>
                   <input
                     className="input-animate"
-                    type={field.type || 'text'}
-                    style={styles.formInput}
+                    type="text"
+                    style={{ ...styles.formInput, ...(formErrors[field.key] ? { borderColor: '#dc2626' } : {}) }}
                     value={deliveryForm[field.key]}
                     onChange={e => setDeliveryForm(prev => ({ ...prev, [field.key]: e.target.value }))}
+                    onKeyDown={field.numeric ? (e) => { if (!/[\d\b]/.test(e.key) && e.key !== 'Backspace' && e.key !== 'Delete' && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Tab') { e.preventDefault(); } } : undefined}
                     placeholder={field.placeholder}
                   />
+                  {formErrors[field.key] && (
+                    <div style={styles.formError}>{formErrors[field.key]}</div>
+                  )}
                 </div>
               ))}
+              <div style={{
+                backgroundColor: '#fffbeb',
+                border: '1px solid #fde68a',
+                borderRadius: '10px',
+                padding: '0.875rem',
+                display: 'flex',
+                gap: '0.625rem',
+                alignItems: 'flex-start',
+                marginTop: '0.5rem',
+              }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                  <line x1="12" y1="9" x2="12" y2="13"/>
+                  <line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+                <span style={{ fontSize: '0.8125rem', color: '#92400e', lineHeight: 1.5 }}>
+                  Please don't forget to <span style={{ color: '#8B0000', fontWeight: 700 }}>deposit the payment</span> in the cash pod compartment of the selected vault.
+                </span>
+              </div>
             </div>
             <div style={{
               display: 'flex',
@@ -785,14 +889,14 @@ function Dashboard() {
               backgroundColor: '#fff',
               flexShrink: 0,
             }}>
-              <button className="btn-animate" style={{ ...styles.saveBtn, minHeight: 48, fontSize: '1rem' }} onClick={handleSaveDelivery}>
-                Save Delivery
+              <button className="btn-animate" style={{ ...styles.saveBtn, minHeight: 48, fontSize: '1rem' }} onClick={handleContinueToConfirm}>
+                Continue
               </button>
               <div style={{ display: 'flex', gap: '0.75rem' }}>
                 <button className="btn-animate" style={{ ...styles.resetBtn, minHeight: 44, flex: 1 }} onClick={handleModalReset}>
                   Reset
                 </button>
-                <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44, flex: 1 }} onClick={() => setShowSetDeliveryModal(false)}>
+                <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44, flex: 1 }} onClick={() => { setFormErrors({}); setShowSetDeliveryModal(false); }}>
                   Cancel
                 </button>
               </div>
@@ -803,7 +907,7 @@ function Dashboard() {
             <div className="modal-content-enter" style={{ ...styles.modal, maxWidth: 450 }}>
               <div style={styles.modalHeader}>
                 <h3 style={styles.modalTitle}>Set Delivery - Vault {selectedVault?.id}</h3>
-                <button className="btn-animate" style={styles.closeBtn} onClick={() => setShowSetDeliveryModal(false)}>
+                <button className="btn-animate" style={styles.closeBtn} onClick={() => { setFormErrors({}); setShowSetDeliveryModal(false); }}>
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
                   </svg>
@@ -811,33 +915,245 @@ function Dashboard() {
               </div>
               <div style={{ ...styles.modalBody, maxHeight: '60vh', overflowY: 'auto' }}>
                 {[
-                  { label: 'Delivery Rider', key: 'receiverName', placeholder: 'Enter delivery rider name' },
-                  { label: 'Contact Number', key: 'contactNumber', placeholder: 'Enter contact number' },
+                  { label: 'Receiver Name', key: 'receiverName', placeholder: 'Enter receiver name' },
+                  { label: 'Contact Number', key: 'contactNumber', placeholder: 'Enter contact number', numeric: true },
                   { label: 'Parcel Info', key: 'parcelInfo', placeholder: 'Enter parcel description' },
-                  { label: 'Delivery Fee (₱)', key: 'deliveryFee', placeholder: '0.00', type: 'number' },
+                  { label: 'Delivery Fee (₱)', key: 'deliveryFee', placeholder: '0.00', numeric: true },
                 ].map((field, i) => (
                   <div key={i} style={styles.formGroup}>
                     <label style={styles.formLabel}>{field.label}</label>
                     <input
                       className="input-animate"
-                      type={field.type || 'text'}
-                      style={styles.formInput}
+                      type="text"
+                      style={{ ...styles.formInput, ...(formErrors[field.key] ? { borderColor: '#dc2626' } : {}) }}
                       value={deliveryForm[field.key]}
                       onChange={e => setDeliveryForm(prev => ({ ...prev, [field.key]: e.target.value }))}
+                      onKeyDown={field.numeric ? (e) => { if (!/[\d\b]/.test(e.key) && e.key !== 'Backspace' && e.key !== 'Delete' && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Tab') { e.preventDefault(); } } : undefined}
                       placeholder={field.placeholder}
                     />
+                    {formErrors[field.key] && (
+                      <div style={styles.formError}>{formErrors[field.key]}</div>
+                    )}
                   </div>
                 ))}
+                <div style={{
+                  backgroundColor: '#fffbeb',
+                  border: '1px solid #fde68a',
+                  borderRadius: '10px',
+                  padding: '0.875rem',
+                  display: 'flex',
+                  gap: '0.625rem',
+                  alignItems: 'flex-start',
+                  marginTop: '0.5rem',
+                }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                  </svg>
+                  <span style={{ fontSize: '0.8125rem', color: '#92400e', lineHeight: 1.5 }}>
+                    Please don't forget to <span style={{ color: '#8B0000', fontWeight: 700 }}>deposit the payment</span> in the cash pod compartment of the selected vault.
+                  </span>
+                </div>
               </div>
               <div style={r.modalFooter}>
-                <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44 }} onClick={() => setShowSetDeliveryModal(false)}>
+                <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44 }} onClick={() => { setFormErrors({}); setShowSetDeliveryModal(false); }}>
                   Cancel
                 </button>
                 <button className="btn-animate" style={{ ...styles.resetBtn, minHeight: 44 }} onClick={handleModalReset}>
                   Reset
                 </button>
-                <button className="btn-animate" style={{ ...styles.saveBtn, minHeight: 44 }} onClick={handleSaveDelivery}>
-                  Save Delivery
+                <button className="btn-animate" style={{ ...styles.saveBtn, minHeight: 44 }} onClick={handleContinueToConfirm}>
+                  Continue
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      )}
+
+      {/* CONFIRM PARCEL ASSIGNMENT MODAL */}
+      {showConfirmModal && (
+        isMobile ? (
+          <div className="mobile-sheet-enter" style={mobileModalShell}>
+            <div style={styles.modalHeader}>
+              <h3 style={styles.modalTitle}>Confirm Parcel Assignment</h3>
+              <button className="btn-animate" style={styles.closeBtn} onClick={() => { setShowConfirmModal(false); setShowSetDeliveryModal(true); }}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                </svg>
+              </button>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '1rem', WebkitOverflowScrolling: 'touch' }}>
+              <div style={{
+                backgroundColor: '#f9fafb',
+                border: '1px solid #f0f1f3',
+                borderRadius: '10px',
+                padding: '1rem',
+                marginBottom: '1rem',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <span style={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Selected Vault</span>
+                  <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#0f172a' }}>Vault {selectedVault?.id}</span>
+                </div>
+                <div style={{ borderTop: '1px solid #f0f1f3', margin: '0.5rem 0' }} />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                  <div>
+                    <div style={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Delivery Rider</div>
+                    <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#0f172a' }}>{deliveryForm.receiverName}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Contact</div>
+                    <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#0f172a' }}>{deliveryForm.contactNumber}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Parcel Info</div>
+                    <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#0f172a' }}>{deliveryForm.parcelInfo}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Delivery Fee</div>
+                    <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#0f172a' }}>₱{deliveryForm.deliveryFee}</div>
+                  </div>
+                </div>
+              </div>
+              <div style={{
+                backgroundColor: '#f0fdf4',
+                border: '1px solid #bbf7d0',
+                borderRadius: '10px',
+                padding: '0.875rem',
+                display: 'flex',
+                gap: '0.625rem',
+                alignItems: 'flex-start',
+                marginBottom: '0.75rem',
+              }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="#16a34a">
+                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                </svg>
+                <span style={{ fontSize: '0.8125rem', color: '#166534', lineHeight: 1.5 }}>
+                  Vault will be set to <span style={{ color: '#8B0000', fontWeight: 700 }}>Assigned</span> after assignment. <span style={{ color: '#8B0000', fontWeight: 700 }}>OTP</span> can then be generated for the delivery rider.
+                </span>
+              </div>
+              <div style={{
+                backgroundColor: '#fffbeb',
+                border: '1px solid #fde68a',
+                borderRadius: '10px',
+                padding: '0.875rem',
+                display: 'flex',
+                gap: '0.625rem',
+                alignItems: 'flex-start',
+              }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                  <line x1="12" y1="9" x2="12" y2="13"/>
+                  <line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+                <span style={{ fontSize: '0.8125rem', color: '#92400e', lineHeight: 1.5 }}>
+                  Please don't forget to <span style={{ color: '#8B0000', fontWeight: 700 }}>take a photo of the cash</span> placed inside the cash pod and <span style={{ color: '#8B0000', fontWeight: 700 }}>send the proof</span> to the designated delivery rider.
+                </span>
+              </div>
+            </div>
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.75rem',
+              padding: '1rem',
+              borderTop: '1px solid #e5e7eb',
+              backgroundColor: '#fff',
+              flexShrink: 0,
+            }}>
+              <button className="btn-animate" style={{ ...styles.saveBtn, minHeight: 48, fontSize: '1rem' }} onClick={handleAssignParcel}>
+                Assign Parcel
+              </button>
+              <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44, width: '100%' }} onClick={() => { setShowConfirmModal(false); setShowSetDeliveryModal(true); }}>
+                Back
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="modal-overlay-enter" style={desktopOverlay}>
+            <div className="modal-content-enter" style={{ ...styles.modal, maxWidth: 450 }}>
+              <div style={styles.modalHeader}>
+                <h3 style={styles.modalTitle}>Confirm Parcel Assignment</h3>
+                <button className="btn-animate" style={styles.closeBtn} onClick={() => { setShowConfirmModal(false); setShowSetDeliveryModal(true); }}>
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                  </svg>
+                </button>
+              </div>
+              <div style={{ ...styles.modalBody, maxHeight: '60vh', overflowY: 'auto' }}>
+                <div style={{
+                  backgroundColor: '#f9fafb',
+                  border: '1px solid #f0f1f3',
+                  borderRadius: '10px',
+                  padding: '1rem',
+                  marginBottom: '1rem',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                    <span style={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Selected Vault</span>
+                    <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#0f172a' }}>Vault {selectedVault?.id}</span>
+                  </div>
+                  <div style={{ borderTop: '1px solid #f0f1f3', margin: '0.5rem 0' }} />
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                    <div>
+                      <div style={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Delivery Rider</div>
+                      <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#0f172a' }}>{deliveryForm.receiverName}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Contact</div>
+                      <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#0f172a' }}>{deliveryForm.contactNumber}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Parcel Info</div>
+                      <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#0f172a' }}>{deliveryForm.parcelInfo}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Delivery Fee</div>
+                      <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#0f172a' }}>₱{deliveryForm.deliveryFee}</div>
+                    </div>
+                  </div>
+                </div>
+                <div style={{
+                  backgroundColor: '#f0fdf4',
+                  border: '1px solid #bbf7d0',
+                  borderRadius: '10px',
+                  padding: '0.875rem',
+                  display: 'flex',
+                  gap: '0.625rem',
+                  alignItems: 'flex-start',
+                  marginBottom: '0.75rem',
+                }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="#16a34a">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                  </svg>
+                  <span style={{ fontSize: '0.8125rem', color: '#166534', lineHeight: 1.5 }}>
+                    Vault will be set to <span style={{ color: '#8B0000', fontWeight: 700 }}>Assigned</span> after assignment. <span style={{ color: '#8B0000', fontWeight: 700 }}>OTP</span> can then be generated for the delivery rider.
+                  </span>
+                </div>
+                <div style={{
+                  backgroundColor: '#fffbeb',
+                  border: '1px solid #fde68a',
+                  borderRadius: '10px',
+                  padding: '0.875rem',
+                  display: 'flex',
+                  gap: '0.625rem',
+                  alignItems: 'flex-start',
+                }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                  </svg>
+                  <span style={{ fontSize: '0.8125rem', color: '#92400e', lineHeight: 1.5 }}>
+                    Please don't forget to <span style={{ color: '#8B0000', fontWeight: 700 }}>take a photo of the cash</span> placed inside the cash pod and <span style={{ color: '#8B0000', fontWeight: 700 }}>send the proof</span> to the designated delivery rider.
+                  </span>
+                </div>
+              </div>
+              <div style={r.modalFooter}>
+                <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44 }} onClick={() => { setShowConfirmModal(false); setShowSetDeliveryModal(true); }}>
+                  Back
+                </button>
+                <button className="btn-animate" style={{ ...styles.saveBtn, minHeight: 44 }} onClick={handleAssignParcel}>
+                  Assign Parcel
                 </button>
               </div>
             </div>
@@ -876,7 +1192,7 @@ function Dashboard() {
               </div>
               <h3 style={{ ...styles.modalTitle, textAlign: 'center' }}>Warning</h3>
               <p style={{ ...styles.warningText, marginBottom: '0.5rem' }}>
-                The vault will open automatically. Please make sure the rider is present before confirming.
+                The vault will open automatically. Please confirm that <span style={{ color: '#8B0000', fontWeight: 700 }}>you are physically present</span> at the vault — do not confirm on behalf of the rider.
               </p>
               <button className="btn-animate" style={{ ...styles.confirmBtn, minHeight: 48, fontSize: '1rem' }} onClick={handleConfirmWithWarning}>
                 Confirm & Open Vault
@@ -906,7 +1222,7 @@ function Dashboard() {
                       <line x1="12" y1="17" x2="12.01" y2="17"/>
                     </svg>
                   </div>
-                  <p style={styles.warningText}>The vault will open automatically. Please make sure the rider is present before confirming.</p>
+                  <p style={styles.warningText}>The vault will open automatically. Please confirm that <span style={{ color: '#8B0000', fontWeight: 700 }}>you are physically present</span> at the vault.</p>
                 </div>
               </div>
               <div style={{ ...r.modalFooter, flexDirection: 'column' }}>
@@ -1056,6 +1372,7 @@ const styles = {
   formGroup: { marginBottom: '1rem' },
   formLabel: { display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', marginBottom: '0.5rem', letterSpacing: '0.01em' },
   formInput: { width: '100%', padding: '0.75rem', border: '1.5px solid #e8eaed', borderRadius: '10px', fontSize: '1rem', boxSizing: 'border-box', backgroundColor: '#fafafa', fontFamily: 'var(--font)' },
+  formError: { color: '#dc2626', fontSize: '0.75rem', marginTop: '0.25rem', fontWeight: 500 },
   cancelBtn: { padding: '0.75rem 1.25rem', backgroundColor: '#f4f5f7', color: '#374151', border: '1px solid #e8eaed', borderRadius: '10px', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' },
   resetBtn: { padding: '0.75rem 1.25rem', backgroundColor: '#f4f5f7', color: '#374151', border: '1px solid #e8eaed', borderRadius: '10px', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' },
   saveBtn: { padding: '0.75rem 1.25rem', backgroundColor: '#8B0000', color: '#fff', border: 'none', borderRadius: '10px', fontSize: '0.875rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'var(--font)' },

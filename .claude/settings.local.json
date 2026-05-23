@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(npm install *)",
-      "Bash(firebase deploy *)"
+      "Bash(firebase deploy *)",
+      "Bash(npm run *)",
+      "Bash(Select-Object -First 30)",
+      "PowerShell(jsx:true *)",
+      "Bash(node -e \"const fs = require\\('fs'\\); const code = fs.readFileSync\\('src/pages/Dashboard.jsx', 'utf8'\\); console.log\\('File loaded successfully, length:', code.length\\)\")"
     ]
   }
 }
