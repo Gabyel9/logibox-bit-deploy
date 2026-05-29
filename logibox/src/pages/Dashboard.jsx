@@ -229,6 +229,35 @@ function Dashboard() {
 
   useEffect(() => {
     if (!user || vaults.length === 0) return;
+
+    const interval = setInterval(() => {
+      const now = Date.now();
+      vaults.forEach(v => {
+        if (v.otpStatus === 'active' && v.otpExpiresAt) {
+          const expiresAt = new Date(v.otpExpiresAt).getTime();
+          if (now >= expiresAt) {
+            setVaultOTPs(prev => {
+              const updated = { ...prev };
+              delete updated[v.id];
+              return updated;
+            });
+            clearSessionStorage(v.id);
+            setDoc(
+              doc(db, 'users', user.uid, 'vaults', v.id.toString()),
+              { otpStatus: 'expired' },
+              { merge: true }
+            );
+            logActivity('OTP Expired', `OTP expired for Vault ${v.id}`, v.id);
+          }
+        }
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [user, vaults, logActivity]);
+
+  useEffect(() => {
+    if (!user || vaults.length === 0) return;
     const activeVaults = vaults.filter(v => v.otpStatus === 'active' && v.otpExpiresAt);
     if (activeVaults.length === 0) return;
 

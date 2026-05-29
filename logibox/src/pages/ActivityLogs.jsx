@@ -67,7 +67,9 @@ function ActivityLogs() {
     if (activeFilter === 'all') return logs;
     if (activeFilter === 'Login') return logs.filter(l => l.action === 'Login' || l.action === 'Logout');
     if (activeFilter === 'Vault') return logs.filter(l => l.action === 'Vault Assigned' || l.action === 'Delivery Confirmed' || l.action === 'Vault Reset');
-    if (activeFilter === 'OTP') return logs.filter(l => l.action === 'OTP Generated');
+    if (activeFilter === 'OTP') return logs.filter(l =>
+      l.action === 'OTP Generated' || l.action === 'OTP Expired'
+    );
     return logs;
   };
 
