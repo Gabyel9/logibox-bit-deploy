@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { SettingsProvider } from './context/SettingsContext';
+import ErrorBoundary from './components/ErrorBoundary';
 import Dashboard from './pages/Dashboard';
 import CameraFeed from './pages/CameraFeed';
 import ActivityLogs from './pages/ActivityLogs';
@@ -10,6 +11,7 @@ import Landing from './pages/Landing';
 import SignIn from './pages/SignIn';
 import SignUp from './pages/SignUp';
 import VerifyEmail from './pages/VerifyEmail';
+import ForgotPassword from './pages/ForgotPassword';
 import LockerSimulator from './pages/LockerSimulator';
 
 function ProtectedRoute({ children }) {
@@ -40,22 +42,25 @@ function PublicRoute({ children }) {
 
 function AppRoutes() {
   return (
-    <div style={styles.container}>
-      <main style={styles.mainFull}>
-        <Routes>
-          <Route path="/" element={<PublicRoute><Landing /></PublicRoute>} />
-          <Route path="/signin" element={<PublicRoute><SignIn /></PublicRoute>} />
-          <Route path="/signup" element={<PublicRoute><SignUp /></PublicRoute>} />
-          <Route path="/verify-email" element={<VerifyEmail />} />
-          <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-          <Route path="/camera" element={<ProtectedRoute><CameraFeed /></ProtectedRoute>} />
-          <Route path="/logs" element={<ProtectedRoute><ActivityLogs /></ProtectedRoute>} />
-          <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
-          <Route path="/help" element={<ProtectedRoute><Help /></ProtectedRoute>} />
-          <Route path="/simulator" element={<ProtectedRoute><LockerSimulator /></ProtectedRoute>} />
-        </Routes>
-      </main>
-    </div>
+    <ErrorBoundary>
+      <div style={styles.container}>
+        <main style={styles.mainFull}>
+          <Routes>
+            <Route path="/" element={<PublicRoute><Landing /></PublicRoute>} />
+            <Route path="/signin" element={<PublicRoute><SignIn /></PublicRoute>} />
+            <Route path="/signup" element={<PublicRoute><SignUp /></PublicRoute>} />
+            <Route path="/verify-email" element={<VerifyEmail />} />
+            <Route path="/forgot-password" element={<PublicRoute><ForgotPassword /></PublicRoute>} />
+            <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+            <Route path="/camera" element={<ProtectedRoute><CameraFeed /></ProtectedRoute>} />
+            <Route path="/logs" element={<ProtectedRoute><ActivityLogs /></ProtectedRoute>} />
+            <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+            <Route path="/help" element={<ProtectedRoute><Help /></ProtectedRoute>} />
+            <Route path="/simulator" element={<ProtectedRoute><LockerSimulator /></ProtectedRoute>} />
+          </Routes>
+        </main>
+      </div>
+    </ErrorBoundary>
   );
 }
 

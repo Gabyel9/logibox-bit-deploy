@@ -1,29 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-
-function cleanError(message) {
-  if (!message) return 'Something went wrong. Please try again.';
-  if (message.includes('invalid-credential') || message.includes('wrong-password') || message.includes('user-not-found')) {
-    return 'Incorrect email or password. Please try again.';
-  }
-  if (message.includes('invalid-email')) {
-    return 'Please enter a valid email address.';
-  }
-  if (message.includes('too-many-requests')) {
-    return 'Too many failed attempts. Please wait a few minutes and try again.';
-  }
-  if (message.includes('network-request-failed')) {
-    return 'No internet connection. Please check your network.';
-  }
-  if (message.includes('popup-closed-by-user')) {
-    return 'Google sign-in was cancelled.';
-  }
-  if (message.includes('popup-blocked')) {
-    return 'Popup was blocked. Please allow popups and try again.';
-  }
-  return 'Something went wrong. Please try again.';
-}
+import { cleanError } from '../utils/cleanError';
 
 function EyeIcon({ visible }) {
   return visible ? (
@@ -155,6 +133,12 @@ function SignIn() {
           >
             {loading ? 'Signing in...' : 'Sign In'}
           </button>
+
+          <div style={styles.forgotContainer}>
+            <Link to="/forgot-password" style={styles.forgotLink}>
+              Forgot Password?
+            </Link>
+          </div>
         </form>
 
         <div style={styles.divider}>
@@ -365,6 +349,16 @@ const styles = {
     color: '#8B0000',
     textDecoration: 'none',
     fontWeight: '600',
+  },
+  forgotContainer: {
+    textAlign: 'center',
+    marginTop: '0.25rem',
+  },
+  forgotLink: {
+    color: '#8B0000',
+    textDecoration: 'none',
+    fontSize: '0.85rem',
+    fontWeight: '500',
   },
 };
 

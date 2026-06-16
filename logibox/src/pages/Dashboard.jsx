@@ -6,6 +6,7 @@ import { collection, doc, setDoc, onSnapshot, writeBatch, addDoc, serverTimestam
 import { db } from '../config/firebase';
 import { generateSecureOTP, hashOTP } from '../utils/otp';
 import { encryptOTP, decryptOTP } from '../utils/crypto';
+import { sanitizeUserInput } from '../utils/sanitize';
 import { useVaultTimer } from '../hooks/useVaultTimer';
 import Navbar from '../components/Navbar';
 
@@ -682,9 +683,9 @@ function Dashboard() {
                           <div style={styles.vaultDetails}>
                             <div style={styles.detailGrid}>
                               {[
-                                { label: 'Delivery Rider', value: vault.receiverName },
-                                { label: 'Contact', value: vault.contactNumber },
-                                { label: 'Parcel', value: vault.parcelInfo },
+                                { label: 'Delivery Rider', value: sanitizeUserInput(vault.receiverName) },
+                                { label: 'Contact', value: sanitizeUserInput(vault.contactNumber) },
+                                { label: 'Parcel', value: sanitizeUserInput(vault.parcelInfo) },
                                 { label: 'Fee', value: `₱${vault.deliveryFee}` },
                               ].map((item, i) => (
                                 <div key={i} style={styles.detailItem}>

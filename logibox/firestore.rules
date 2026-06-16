@@ -7,6 +7,15 @@ service cloud.firestore {
       return vaultId in ['1', '2', '3'];
     }
 
+    // Helper function to validate string fields
+    function isValidString(value, maxLen) {
+      return value is string && value.size() > 0 && value.size() <= maxLen;
+    }
+
+    function isValidOptionalString(value, maxLen) {
+      return value == null || (value is string && value.size() <= maxLen);
+    }
+
     // Helper function to validate user fields for create
     function isValidUserCreate(data) {
       let allowed = [
@@ -16,7 +25,11 @@ service cloud.firestore {
         'lastOtpGeneratedAt_1', 'lastOtpGeneratedAt_2', 'lastOtpGeneratedAt_3'
       ];
       return data.keys().hasOnly(allowed)
-        && data.keys().hasAny(['email', 'firstName', 'lastName']);
+        && data.keys().hasAny(['email', 'firstName', 'lastName'])
+        && isValidString(data.firstName, 50)
+        && isValidString(data.lastName, 50)
+        && isValidString(data.email, 100)
+        && isValidOptionalString(data.photoURL, 500);
     }
 
     // Helper function to validate user fields for update
@@ -27,7 +40,11 @@ service cloud.firestore {
         'profileBackfilled', 'createdAt', 'provider',
         'lastOtpGeneratedAt_1', 'lastOtpGeneratedAt_2', 'lastOtpGeneratedAt_3'
       ];
-      return request.resource.data.keys().hasOnly(allowed);
+      return request.resource.data.keys().hasOnly(allowed)
+        && (!('firstName' in data) || isValidString(data.firstName, 50))
+        && (!('lastName' in data) || isValidString(data.lastName, 50))
+        && (!('email' in data) || isValidString(data.email, 100))
+        && (!('photoURL' in data) || isValidOptionalString(data.photoURL, 500));
     }
 
     // Helper function to validate vault fields
@@ -44,7 +61,11 @@ service cloud.firestore {
         && data.status is string
         && data.status in validStatuses
         && (!('enabled' in data) || data.enabled is bool)
-        && (!('otpStatus' in data) || data.otpStatus == null || data.otpStatus in validOtpStatuses);
+        && (!('otpStatus' in data) || data.otpStatus == null || data.otpStatus in validOtpStatuses)
+        && isValidOptionalString(data.receiverName, 100)
+        && isValidOptionalString(data.contactNumber, 20)
+        && isValidOptionalString(data.parcelInfo, 200)
+        && (!('deliveryFee' in data) || data.deliveryFee == null || (data.deliveryFee is int && data.deliveryFee >= 0));
     }
 
     // User profile - authenticated users can only access their own
@@ -76,8 +97,10 @@ service cloud.firestore {
         allow read: if request.auth != null && request.auth.uid == uid;
         allow create: if request.auth != null
           && request.auth.uid == uid
-          && request.resource.data.action is string
-          && request.resource.data.timestamp is timestamp;
+          && isValidString(request.resource.data.action, 100)
+          && isValidOptionalString(request.resource.data.details, 500)
+          && request.resource.data.timestamp is timestamp
+          && (!('vaultId' in request.resource.data) || request.resource.data.vaultId is int);
         allow update, delete: if false;
       }
     }

@@ -7,9 +7,11 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
   sendEmailVerification,
+  sendPasswordResetEmail,
 } from 'firebase/auth';
 import { doc, setDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
+import { cleanError, getSafeErrorMessage } from '../utils/cleanError';
 
 const AuthContext = createContext();
 
@@ -49,7 +51,7 @@ export function AuthProvider({ children }) {
       const result = await signInWithEmailAndPassword(auth, email, password);
       await logActivity(result.user.uid, 'Login', 'User signed in with email');
     } catch (err) {
-      setError(err.message);
+      setError(cleanError(err.message));
       throw err;
     }
   };
@@ -96,7 +98,7 @@ export function AuthProvider({ children }) {
 
       await logActivity(firebaseUser.uid, 'Login', 'User signed in with Google');
     } catch (err) {
-      setError(err.message);
+      setError(cleanError(err.message));
       throw err;
     }
   };
@@ -124,7 +126,7 @@ export function AuthProvider({ children }) {
         console.error('Activity log error:', e);
       }
     } catch (err) {
-      setError(err.message);
+      setError(cleanError(err.message));
       throw err;
     }
   };
@@ -137,7 +139,17 @@ export function AuthProvider({ children }) {
       }
       await signOut(auth);
     } catch (err) {
-      setError(err.message);
+      setError(cleanError(err.message));
+    }
+  };
+
+  const resetPassword = async (email) => {
+    setError(null);
+    try {
+      await sendPasswordResetEmail(auth, email);
+    } catch (err) {
+      setError(cleanError(err.message));
+      throw err;
     }
   };
 
@@ -149,6 +161,7 @@ export function AuthProvider({ children }) {
     signup,
     logout,
     googleSignIn,
+    resetPassword,
   };
 
   return (

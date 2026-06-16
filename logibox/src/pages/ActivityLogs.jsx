@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import { sanitizeLogText } from '../utils/sanitize';
 import Navbar from '../components/Navbar';
 
 function ActivityLogs() {
@@ -12,6 +13,8 @@ function ActivityLogs() {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
   useEffect(() => {
     const checkMobile = () => {
@@ -48,6 +51,11 @@ function ActivityLogs() {
     navigate('/signin');
   };
 
+  const clearDates = () => {
+    setDateFrom('');
+    setDateTo('');
+  };
+
   const getActionColor = (action) => {
     if (action === 'Login' || action === 'Logout') return '#22c55e';
     if (action === 'Vault Assigned') return '#3b82f6';
@@ -64,13 +72,41 @@ function ActivityLogs() {
   };
 
   const filterLogs = () => {
-    if (activeFilter === 'all') return logs;
-    if (activeFilter === 'Login') return logs.filter(l => l.action === 'Login' || l.action === 'Logout');
-    if (activeFilter === 'Vault') return logs.filter(l => l.action === 'Vault Assigned' || l.action === 'Delivery Confirmed' || l.action === 'Vault Reset');
-    if (activeFilter === 'OTP') return logs.filter(l =>
-      l.action === 'OTP Generated' || l.action === 'OTP Expired'
-    );
-    return logs;
+    let filtered = logs;
+
+    // Filter by action type
+    if (activeFilter === 'all') {
+      // No action filter
+    } else if (activeFilter === 'Login') {
+      filtered = filtered.filter(l => l.action === 'Login' || l.action === 'Logout');
+    } else if (activeFilter === 'Vault') {
+      filtered = filtered.filter(l => l.action === 'Vault Assigned' || l.action === 'Delivery Confirmed' || l.action === 'Vault Reset');
+    } else if (activeFilter === 'OTP') {
+      filtered = filtered.filter(l => l.action === 'OTP Generated' || l.action === 'OTP Expired');
+    }
+
+    // Filter by date range
+    if (dateFrom || dateTo) {
+      filtered = filtered.filter(l => {
+        if (!l.timestamp) return false;
+        const logDate = l.timestamp.toDate ? l.timestamp.toDate() : new Date(l.timestamp);
+        const logDateOnly = new Date(logDate.getFullYear(), logDate.getMonth(), logDate.getDate());
+
+        if (dateFrom) {
+          const fromDate = new Date(dateFrom);
+          fromDate.setHours(0, 0, 0, 0);
+          if (logDateOnly < fromDate) return false;
+        }
+        if (dateTo) {
+          const toDate = new Date(dateTo);
+          toDate.setHours(23, 59, 59, 999);
+          if (logDateOnly > toDate) return false;
+        }
+        return true;
+      });
+    }
+
+    return filtered;
   };
 
   const filteredLogs = filterLogs();
@@ -105,6 +141,34 @@ function ActivityLogs() {
                 {filter.charAt(0).toUpperCase() + filter.slice(1)}
               </button>
             ))}
+            <span style={styles.filterDivider}>|</span>
+            <div style={isMobile ? styles.dateFilterWrapperMobile : styles.dateFilterWrapper}>
+              <div style={styles.dateFilterRow}>
+                <span style={styles.dateLabel}>From</span>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  style={styles.dateInput}
+                />
+              </div>
+              <div style={styles.dateFilterRow}>
+                <span style={styles.dateLabel}>To</span>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  style={styles.dateInput}
+                />
+              </div>
+              <button
+                className="btn-animate"
+                style={styles.clearDatesBtn}
+                onClick={clearDates}
+              >
+                Clear
+              </button>
+            </div>
           </div>
 
           {/* Loading */}
@@ -126,8 +190,8 @@ function ActivityLogs() {
                 <div key={log.id} className="log-item-enter" style={styles.logItem}>
                   <div style={{ ...styles.logDot, backgroundColor: getActionColor(log.action) }}></div>
                   <div style={styles.logContent}>
-                    <div style={styles.logAction}>{log.action}</div>
-                    <div style={styles.logDetails}>{log.details}</div>
+                    <div style={styles.logAction}>{sanitizeLogText(log.action)}</div>
+                    <div style={styles.logDetails}>{sanitizeLogText(log.details)}</div>
                   </div>
                   <div style={styles.logTimestamp}>{formatTimestamp(log.timestamp)}</div>
                 </div>
@@ -169,6 +233,23 @@ const styles = {
     gap: '0.5rem',
     marginBottom: '1.5rem',
     flexWrap: 'wrap',
+    alignItems: 'center',
+  },
+  dateFilterWrapper: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+  dateFilterWrapperMobile: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.5rem',
+    width: '100%',
+  },
+  dateFilterRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
   },
   filterBtn: {
     padding: '0.5rem 1rem',
@@ -181,8 +262,44 @@ const styles = {
   },
   filterBtnActive: {
     backgroundColor: '#8B0000',
-    borderColor: '#8B0000',
+    border: '1px solid #8B0000',
     color: '#fff',
+  },
+  filterDivider: {
+    color: '#e5e7eb',
+    margin: '0 0.25rem',
+    alignSelf: 'center',
+  },
+  dateLabel: {
+    fontSize: '0.8125rem',
+    color: '#6b7280',
+    fontWeight: 500,
+    alignSelf: 'center',
+  },
+  dateInput: {
+    padding: '0.5rem 0.75rem',
+    borderRadius: '8px',
+    border: '1px solid #e5e7eb',
+    fontSize: '0.8125rem',
+    fontFamily: 'var(--font)',
+    color: '#1f2937',
+    outline: 'none',
+    backgroundColor: '#f4f5f7',
+    height: 'auto',
+    minHeight: '2.25rem',
+    flex: 1,
+  },
+  clearDatesBtn: {
+    padding: '0.5rem 1rem',
+    backgroundColor: '#f4f5f7',
+    border: '1px solid #e5e7eb',
+    borderRadius: '8px',
+    fontSize: '0.8125rem',
+    color: '#8B0000',
+    cursor: 'pointer',
+    fontFamily: 'var(--font)',
+    fontWeight: 500,
+    width: '100%',
   },
   loadingSpinner: {
     display: 'flex',
