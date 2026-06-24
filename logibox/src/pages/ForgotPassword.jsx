@@ -72,13 +72,15 @@ function ForgotPassword() {
               <div style={styles.formGroup}>
                 <label style={styles.label}>Email</label>
                 <input
+                  id="email"
+                  name="email"
                   className="input-animate"
                   type="email"
                   value={email}
                   onChange={(e) => { setEmail(e.target.value); setError(''); }}
                   style={{
                     ...styles.input,
-                    borderColor: error ? '#ef4444' : '#d1d5db',
+                    border: error ? '1.5px solid #ef4444' : '1.5px solid #d1d5db',
                   }}
                   placeholder="Enter your email"
                   required

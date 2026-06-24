@@ -120,6 +120,15 @@ exports.verifyOTPAndOpenVault = onCall(async (request) => {
   const rateLimit = await checkRateLimit(uid, vaultId);
   if (!rateLimit.allowed) {
     const minutesRemaining = Math.ceil((rateLimit.resetAt.getTime() - Date.now()) / 60000);
+
+    // Log rate limit exceeded event
+    await db.collection(`users/${uid}/activityLogs`).add({
+      action: 'Rate Limit Exceeded',
+      details: `OTP verification rate limit exceeded for vault ${vaultId}. Try again in ${minutesRemaining} minutes.`,
+      vaultId: parseInt(vaultId),
+      timestamp: new Date(),
+    });
+
     throw new HttpsError('resource-exhausted', `Too many attempts. Please try again in ${minutesRemaining} minutes.`);
   }
 

@@ -146,6 +146,8 @@ function ActivityLogs() {
               <div style={styles.dateFilterRow}>
                 <span style={styles.dateLabel}>From</span>
                 <input
+                  id="dateFrom"
+                  name="dateFrom"
                   type="date"
                   value={dateFrom}
                   onChange={(e) => setDateFrom(e.target.value)}
@@ -155,6 +157,8 @@ function ActivityLogs() {
               <div style={styles.dateFilterRow}>
                 <span style={styles.dateLabel}>To</span>
                 <input
+                  id="dateTo"
+                  name="dateTo"
                   type="date"
                   value={dateTo}
                   onChange={(e) => setDateTo(e.target.value)}

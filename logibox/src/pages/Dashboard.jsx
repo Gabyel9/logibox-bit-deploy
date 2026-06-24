@@ -877,9 +877,11 @@ function Dashboard() {
                 <div key={i} style={styles.formGroup}>
                   <label style={styles.formLabel}>{field.label}</label>
                   <input
+                    id={field.key}
+                    name={field.key}
                     className="input-animate"
                     type="text"
-                    style={{ ...styles.formInput, ...(formErrors[field.key] ? { borderColor: '#dc2626' } : {}) }}
+                    style={{ ...styles.formInput, ...(formErrors[field.key] ? { border: '1.5px solid #dc2626' } : {}) }}
                     value={deliveryForm[field.key]}
                     onChange={e => setDeliveryForm(prev => ({ ...prev, [field.key]: e.target.value }))}
                     onKeyDown={field.numeric ? (e) => { if (!/[\d\b]/.test(e.key) && e.key !== 'Backspace' && e.key !== 'Delete' && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Tab') { e.preventDefault(); } } : undefined}
@@ -953,9 +955,11 @@ function Dashboard() {
                   <div key={i} style={styles.formGroup}>
                     <label style={styles.formLabel}>{field.label}</label>
                     <input
+                      id={field.key}
+                      name={field.key}
                       className="input-animate"
                       type="text"
-                      style={{ ...styles.formInput, ...(formErrors[field.key] ? { borderColor: '#dc2626' } : {}) }}
+                      style={{ ...styles.formInput, ...(formErrors[field.key] ? { border: '1.5px solid #dc2626' } : {}) }}
                       value={deliveryForm[field.key]}
                       onChange={e => setDeliveryForm(prev => ({ ...prev, [field.key]: e.target.value }))}
                       onKeyDown={field.numeric ? (e) => { if (!/[\d\b]/.test(e.key) && e.key !== 'Backspace' && e.key !== 'Delete' && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Tab') { e.preventDefault(); } } : undefined}
@@ -1359,7 +1363,7 @@ const styles = {
   vaultSectionHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' },
   sectionTitle: { fontSize: '1.25rem', fontWeight: 'bold', color: '#1f2937', margin: 0 },
   filterBtn: { padding: '0.5rem 0.875rem', backgroundColor: '#f4f5f7', border: '1px solid transparent', borderRadius: '8px', fontSize: '0.8125rem', color: '#6b7280', cursor: 'pointer', transition: 'all 0.2s ease' },
-  filterBtnActive: { backgroundColor: '#8B0000', borderColor: '#8B0000', color: '#fff' },
+  filterBtnActive: { backgroundColor: '#8B0000', border: '1px solid #8B0000', color: '#fff' },
   vaultCard: { backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #f0f1f3', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' },
   vaultHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 1.25rem', borderBottom: '1px solid #f4f5f7' },
   vaultNumberWrap: { display: 'flex', alignItems: 'center', gap: '0.5rem' },

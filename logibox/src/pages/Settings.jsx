@@ -23,13 +23,15 @@ function EyeIcon({ visible }) {
   );
 }
 
-function PasswordField({ label, value, onChange, placeholder }) {
+function PasswordField({ label, value, onChange, placeholder, name }) {
   const [show, setShow] = useState(false);
   return (
     <div style={{ marginBottom: '1rem' }}>
       <label style={styles.formLabel}>{label} <span style={{ color: '#8B0000' }}>*</span></label>
       <div style={styles.passwordWrapper}>
         <input
+          id={name}
+          name={name}
           className="input-animate"
           type={show ? 'text' : 'password'}
           value={value}
@@ -251,16 +253,16 @@ function Settings() {
             <div className="card-enter" style={styles.card}>
               <div style={styles.formGroup}>
                 <label style={styles.formLabel}>First Name</label>
-                <input className="input-animate" type="text" style={styles.formInput} value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="Enter first name" />
+                <input id="firstName" name="firstName" className="input-animate" type="text" style={styles.formInput} value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="Enter first name" />
               </div>
               <div style={styles.formGroup}>
                 <label style={styles.formLabel}>Last Name</label>
-                <input className="input-animate" type="text" style={styles.formInput} value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Enter last name" />
+                <input id="lastName" name="lastName" className="input-animate" type="text" style={styles.formInput} value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Enter last name" />
               </div>
               <div style={styles.formGroup}>
                 <label style={styles.formLabel}>Email</label>
                 <div style={{ position: 'relative' }}>
-                  <input type="email" style={{ ...styles.formInput, backgroundColor: '#f3f4f6', cursor: 'not-allowed' }} value={email} disabled />
+                  <input id="email" name="email" type="email" style={{ ...styles.formInput, backgroundColor: '#f3f4f6', cursor: 'not-allowed' }} value={email} disabled />
                   {isGoogleUser && (
                     <div style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', display: 'flex', alignItems: 'center', gap: '0.25rem', backgroundColor: '#f3f4f6', padding: '0.25rem 0.5rem', borderRadius: 4, fontSize: '0.7rem', color: '#6b7280' }}>
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
@@ -288,6 +290,8 @@ function Settings() {
                 <p style={styles.formHint}>How long the OTP stays valid after it is generated.</p>
                 <div style={styles.sliderContainer}>
                   <input
+                    id="otpDuration"
+                    name="otpDuration"
                     type="range"
                     min="1"
                     max="10"
@@ -360,6 +364,7 @@ function Settings() {
 
                   <PasswordField
                     label="Current Password"
+                    name="currentPassword"
                     value={currentPassword}
                     onChange={(e) => setCurrentPassword(e.target.value)}
                     placeholder="Enter current password"
@@ -367,6 +372,7 @@ function Settings() {
 
                   <PasswordField
                     label="New Password"
+                    name="newPassword"
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     placeholder="Enter new password"
@@ -374,6 +380,7 @@ function Settings() {
 
                   <PasswordField
                     label="Confirm New Password"
+                    name="confirmPassword"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="Confirm new password"

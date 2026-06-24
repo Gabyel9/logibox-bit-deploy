@@ -51,6 +51,17 @@ export function AuthProvider({ children }) {
       const result = await signInWithEmailAndPassword(auth, email, password);
       await logActivity(result.user.uid, 'Login', 'User signed in with email');
     } catch (err) {
+      // Log failed login attempt - we don't have a uid yet, so log without it
+      try {
+        await addDoc(collection(db, 'activityLogs'), {
+          action: 'Login Failed',
+          details: `Failed login attempt for email: ${email}`,
+          vaultId: null,
+          timestamp: serverTimestamp(),
+        });
+      } catch (logErr) {
+        console.error('Failed login log error:', logErr);
+      }
       setError(cleanError(err.message));
       throw err;
     }
@@ -147,6 +158,17 @@ export function AuthProvider({ children }) {
     setError(null);
     try {
       await sendPasswordResetEmail(auth, email);
+      // Log password reset request - no uid available since user may not be authenticated
+      try {
+        await addDoc(collection(db, 'activityLogs'), {
+          action: 'Password Reset Requested',
+          details: `Password reset email requested for: ${email}`,
+          vaultId: null,
+          timestamp: serverTimestamp(),
+        });
+      } catch (logErr) {
+        console.error('Password reset log error:', logErr);
+      }
     } catch (err) {
       setError(cleanError(err.message));
       throw err;

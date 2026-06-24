@@ -23,14 +23,15 @@ function PasswordInput({ value, onChange, placeholder, name, error }) {
     <div>
       <div style={styles.passwordWrapper}>
         <input
+          id={name}
+          name={name}
           className="input-animate"
           type={visible ? 'text' : 'password'}
-          name={name}
           value={value}
           onChange={onChange}
           style={{
             ...styles.input,
-            borderColor: error ? '#ef4444' : '#d1d5db',
+            border: error ? '1.5px solid #ef4444' : '1.5px solid #d1d5db',
           }}
           placeholder={placeholder}
           required
@@ -171,9 +172,10 @@ function SignUp() {
             <div style={styles.formGroup}>
               <label style={styles.label}>First Name</label>
               <input
+                id="firstName"
+                name="firstName"
                 className="input-animate"
                 type="text"
-                name="firstName"
                 value={formData.firstName}
                 onChange={handleChange}
                 style={styles.input}
@@ -184,9 +186,10 @@ function SignUp() {
             <div style={styles.formGroup}>
               <label style={styles.label}>Last Name</label>
               <input
+                id="lastName"
+                name="lastName"
                 className="input-animate"
                 type="text"
-                name="lastName"
                 value={formData.lastName}
                 onChange={handleChange}
                 style={styles.input}
@@ -200,9 +203,10 @@ function SignUp() {
           <div style={styles.formGroup}>
             <label style={styles.label}>Email</label>
             <input
+              id="email"
+              name="email"
               className="input-animate"
               type="email"
-              name="email"
               value={formData.email}
               onChange={handleChange}
               style={styles.input}
