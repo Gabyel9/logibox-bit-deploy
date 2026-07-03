@@ -46,3 +46,6 @@ ui-debug.log
 *.local
 # Claude editor
 .claude/
+.env*
+service-account-key.json
+*.key

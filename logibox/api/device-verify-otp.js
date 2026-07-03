@@ -1,6 +1,6 @@
-const { initializeApp, cert } = require('firebase-admin/app');
-const { getFirestore } = require('firebase-admin/firestore');
-const crypto = require('crypto');
+import { initializeApp, cert } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
+import crypto from 'crypto';
 
 // Rate limiting constants
 const MAX_OTP_ATTEMPTS = 5;
@@ -15,6 +15,7 @@ function getDb() {
     const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
 
     initializeApp({
+      projectId,
       credential: cert({
         projectId,
         clientEmail,
@@ -101,7 +102,7 @@ async function clearDeviceRateLimit(deviceId) {
   });
 }
 
-module.exports = async (req, res) => {
+export default async (req, res) => {
   // Only allow POST
   if (req.method !== 'POST') {
     return res.status(405).json({ success: false, message: 'Method not allowed' });

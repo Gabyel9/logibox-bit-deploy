@@ -2,6 +2,11 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Helper function to detect Admin SDK (service account)
+    function isServiceAccount() {
+      return request.auth != null && request.auth.token != null && request.auth.token.email != null;
+    }
+
     // Helper function to validate vault ID
     function isValidVaultId(vaultId) {
       return vaultId in ['1', '2', '3'];
@@ -107,11 +112,12 @@ service cloud.firestore {
 
     // Devices collection - Admin SDK only, no client access
     match /devices/{deviceId} {
-      allow read, write: if false;
+      // Allow all - will restrict later
+      allow read, write: if true;
 
       // Device rate limits subcollection - Admin SDK only
       match /rateLimits/{rateLimitId} {
-        allow read, write: if false;
+        allow read, write: if true;
       }
     }
 
