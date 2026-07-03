@@ -105,6 +105,16 @@ service cloud.firestore {
       }
     }
 
+    // Devices collection - Admin SDK only, no client access
+    match /devices/{deviceId} {
+      allow read, write: if false;
+
+      // Device rate limits subcollection - Admin SDK only
+      match /rateLimits/{rateLimitId} {
+        allow read, write: if false;
+      }
+    }
+
     // Deny everything else by default
     match /{document=**} {
       allow read, write: if false;
