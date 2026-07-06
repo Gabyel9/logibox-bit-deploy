@@ -31,6 +31,35 @@ const clearSessionStorage = (vaultId) => {
   } catch (e) { }
 };
 
+// Allowed vault fields per firestore.rules isValidVaultData()
+// Used to strip extra fields before setDoc (full document replace)
+const ALLOWED_VAULT_FIELDS = [
+  'id', 'status', 'enabled',
+  'receiverName', 'contactNumber', 'parcelInfo', 'deliveryFee', 'createdAt',
+  'otp', 'otpHash', 'otpEncrypted', 'otpStatus', 'otpCreatedAt', 'otpExpiresAt',
+  'lastOtpGeneratedAt', 'completedAt'
+];
+
+// Clean vault object to only include allowed fields for Firestore security rules
+const cleanVaultForFirestore = (vault) => {
+  const cleaned = {};
+  ALLOWED_VAULT_FIELDS.forEach(field => {
+    if (field in vault) {
+      let value = vault[field];
+      // deliveryFee must be an integer per firestore.rules
+      if (field === 'deliveryFee' && value != null) {
+        value = Math.floor(Number(value));
+      }
+      // Ensure id is a number (consistent with vault creation)
+      if (field === 'id') {
+        value = Number(value);
+      }
+      cleaned[field] = value;
+    }
+  });
+  return cleaned;
+};
+
 function useTick(intervalMs = 1000) {
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -76,6 +105,8 @@ function Dashboard() {
   const [vaults, setVaults] = useState([]);
   const [vaultsLoading, setVaultsLoading] = useState(true);
   const [vaultOTPs, setVaultOTPs] = useState({});
+  const [confirmLoading, setConfirmLoading] = useState(false);
+  const [confirmError, setConfirmError] = useState(null);
 
   useTick();
 
@@ -155,7 +186,7 @@ function Dashboard() {
     const expiresAt = new Date(now.getTime() + OTP_DURATION_MS);
     const nowTimestamp = now.toISOString();
 
-    const updatedVault = {
+    const updatedVault = cleanVaultForFirestore({
       ...vault,
       otp: null,
       otpHash,
@@ -164,7 +195,7 @@ function Dashboard() {
       otpCreatedAt: nowTimestamp,
       otpExpiresAt: expiresAt.toISOString(),
       lastOtpGeneratedAt: nowTimestamp,
-    };
+    });
 
     await setDoc(doc(db, 'users', user.uid, 'vaults', vault.id.toString()), updatedVault);
     const cooldownTime = Date.now();
@@ -199,7 +230,7 @@ function Dashboard() {
       otpExpiresAt: null,
       completedAt: null,
     };
-    await setDoc(doc(db, 'users', user.uid, 'vaults', vaultId.toString()), emptyVault);
+    await setDoc(doc(db, 'users', user.uid, 'vaults', vaultId.toString()), cleanVaultForFirestore(emptyVault));
     setVaultOTPs(prev => {
       const updated = { ...prev };
       delete updated[vaultId];
@@ -399,7 +430,7 @@ function Dashboard() {
   };
 
   const handleAssignParcel = async () => {
-    const updatedVault = {
+    const updatedVault = cleanVaultForFirestore({
       ...selectedVault,
       status: 'assigned',
       receiverName: deliveryForm.receiverName.trim(),
@@ -407,7 +438,7 @@ function Dashboard() {
       parcelInfo: deliveryForm.parcelInfo.trim(),
       deliveryFee: parseFloat(deliveryForm.deliveryFee),
       createdAt: new Date().toISOString(),
-    };
+    });
 
     await setDoc(doc(db, 'users', user.uid, 'vaults', selectedVault.id.toString()), updatedVault);
     await logActivity('Vault Assigned', `Delivery assigned to ${deliveryForm.receiverName} for vault ${selectedVault.id}`, selectedVault.id);
@@ -428,25 +459,34 @@ function Dashboard() {
 
   const handleConfirmWithWarning = async () => {
     setShowWarningModal(false);
+    setConfirmLoading(true);
+    setConfirmError(null);
 
-    const updatedVault = {
+    const updatedVault = cleanVaultForFirestore({
       ...selectedVault,
       status: 'completed',
       completedAt: new Date().toISOString(),
-    };
+    });
 
-    await setDoc(
-      doc(db, 'users', user.uid, 'vaults', selectedVault.id.toString()),
-      updatedVault
-    );
+    try {
+      await setDoc(
+        doc(db, 'users', user.uid, 'vaults', selectedVault.id.toString()),
+        updatedVault
+      );
 
-    await logActivity(
-      'Delivery Confirmed',
-      `Delivery confirmed for vault ${selectedVault.id}`,
-      selectedVault.id
-    );
+      await logActivity(
+        'Delivery Confirmed',
+        `Delivery confirmed for vault ${selectedVault.id}`,
+        selectedVault.id
+      );
 
-    setTimeout(() => handleResetVault(selectedVault.id), 1500);
+      setTimeout(() => handleResetVault(selectedVault.id), 1500);
+    } catch (error) {
+      console.error('Confirm delivery failed:', error);
+      setConfirmError('Failed to confirm delivery. Please try again.');
+    } finally {
+      setConfirmLoading(false);
+    }
   };
 
   const handleCopyOTP = () => {
@@ -1228,8 +1268,18 @@ function Dashboard() {
               <p style={{ ...styles.warningText, marginBottom: '0.5rem' }}>
                 The vault will open automatically. Please confirm that <span style={{ color: '#8B0000', fontWeight: 700 }}>you are physically present</span> at the vault — do not confirm on behalf of the rider.
               </p>
-              <button className="btn-animate" style={{ ...styles.confirmBtn, minHeight: 48, fontSize: '1rem' }} onClick={handleConfirmWithWarning}>
-                Confirm & Open Vault
+              {confirmError && (
+                <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '0.75rem', color: '#dc2626', fontSize: '0.875rem', textAlign: 'center' }}>
+                  {confirmError}
+                </div>
+              )}
+              <button
+                className="btn-animate"
+                style={{ ...styles.confirmBtn, minHeight: 48, fontSize: '1rem', opacity: confirmLoading ? 0.6 : 1, pointerEvents: confirmLoading ? 'none' : 'auto' }}
+                onClick={handleConfirmWithWarning}
+                disabled={confirmLoading}
+              >
+                {confirmLoading ? 'Processing...' : 'Confirm & Open Vault'}
               </button>
               <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44, width: '100%' }} onClick={() => setShowWarningModal(false)}>
                 Cancel
@@ -1257,14 +1307,24 @@ function Dashboard() {
                     </svg>
                   </div>
                   <p style={styles.warningText}>The vault will open automatically. Please confirm that <span style={{ color: '#8B0000', fontWeight: 700 }}>you are physically present</span> at the vault.</p>
+                  {confirmError && (
+                    <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '0.75rem', color: '#dc2626', fontSize: '0.875rem', textAlign: 'center', marginTop: '0.5rem' }}>
+                      {confirmError}
+                    </div>
+                  )}
                 </div>
               </div>
               <div style={{ ...r.modalFooter, flexDirection: 'column' }}>
                 <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44 }} onClick={() => setShowWarningModal(false)}>
                   Cancel
                 </button>
-                <button className="btn-animate" style={{ ...styles.confirmBtn, minHeight: 44 }} onClick={handleConfirmWithWarning}>
-                  Confirm & Open Vault
+                <button
+                  className="btn-animate"
+                  style={{ ...styles.confirmBtn, minHeight: 44, opacity: confirmLoading ? 0.6 : 1, pointerEvents: confirmLoading ? 'none' : 'auto' }}
+                  onClick={handleConfirmWithWarning}
+                  disabled={confirmLoading}
+                >
+                  {confirmLoading ? 'Processing...' : 'Confirm & Open Vault'}
                 </button>
               </div>
             </div>
