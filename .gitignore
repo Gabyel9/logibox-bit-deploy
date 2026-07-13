@@ -1,2 +1,11 @@
 .vercel
 .env*
+
+# Arduino build artifacts
+firmware/LogiBox_OTP_Vault/build/
+*.hex
+*.bin
+*.elf
+
+# VSCode (common for Arduino projects)
+.vscode/
