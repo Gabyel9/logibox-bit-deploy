@@ -1,0 +1,8 @@
+{
+  "buildCommand": "cd logibox && npm run build",
+  "outputDirectory": "logibox/dist",
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
