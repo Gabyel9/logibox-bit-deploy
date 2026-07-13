@@ -108,7 +108,7 @@ export default async (req, res) => {
     return res.status(405).json({ success: false, message: 'Method not allowed' });
   }
 
-  const { deviceId, otp } = req.body;
+  const { deviceId, otp, vaultId } = req.body;
   const db = getDb();
 
   // STEP 1 — Input validation
@@ -123,6 +123,11 @@ export default async (req, res) => {
   // Validate otp is numeric and within expected range (4-6 digits)
   if (!/^\d{4,6}$/.test(otp)) {
     return res.status(400).json({ success: false, message: 'OTP must be 4-6 digits' });
+  }
+
+  // Validate vaultId from request body
+  if (!vaultId || typeof vaultId !== 'string' || vaultId.length === 0) {
+    return res.status(400).json({ success: false, message: 'Vault ID is required' });
   }
 
   try {
@@ -150,19 +155,19 @@ export default async (req, res) => {
       return res.status(403).json({ success: false, message: 'Device is not active' });
     }
 
-    const { ownerUid, vaultId } = device;
+    const { ownerUid, allowedVaultIds } = device;
 
-    if (!ownerUid || !vaultId) {
+    if (!ownerUid || !allowedVaultIds || !Array.isArray(allowedVaultIds) || allowedVaultIds.length === 0) {
       return res.status(500).json({ success: false, message: 'Device configuration error' });
     }
 
-    // Validate vaultId from device record
-    const validVaultIds = ['1', '2', '3'];
-    if (!validVaultIds.includes(vaultId)) {
-      return res.status(500).json({ success: false, message: 'Invalid vault ID in device record' });
+    // Validate vaultId from request against device's allowed list
+    // This is the security-critical check: we ONLY trust vaultId AFTER validating it against allowedVaultIds
+    if (!allowedVaultIds.includes(vaultId)) {
+      return res.status(403).json({ success: false, message: 'Device not authorized for this vault' });
     }
 
-    // STEP 3 — Fetch vault doc using ownerUid and vaultId from device (NOT from request)
+    // STEP 3 — Fetch vault doc using ownerUid from device and validated vaultId from request
     const vaultRef = db.doc(`users/${ownerUid}/vaults/${vaultId}`);
     const vaultDoc = await vaultRef.get();
 
