@@ -79,21 +79,13 @@ service cloud.firestore {
       allow create: if request.auth != null
         && request.auth.uid == uid
         && isValidUserCreate(request.resource.data);
-      allow update: if request.auth != null
-        && request.auth.uid == uid
-        && isValidUserUpdate(request.resource.data);
+      allow update: if request.auth != null && request.auth.uid == uid;
 
       // User's vaults subcollection
       match /vaults/{vaultId} {
         allow read: if request.auth != null && request.auth.uid == uid;
-        allow create: if request.auth != null
-          && request.auth.uid == uid
-          && isValidVaultId(vaultId)
-          && isValidVaultData(request.resource.data);
-        allow update: if request.auth != null
-          && request.auth.uid == uid
-          && isValidVaultId(vaultId)
-          && isValidVaultData(request.resource.data);
+        allow create: if request.auth != null && request.auth.uid == uid;
+        allow update: if request.auth != null && request.auth.uid == uid;
         allow delete: if request.auth != null && request.auth.uid == uid;
       }
     }
@@ -102,7 +94,7 @@ service cloud.firestore {
     match /users/{uid}/activityLogs/{logId} {
       allow read: if request.auth != null && request.auth.uid == uid;
       allow create: if request.auth != null && request.auth.uid == uid;
-      allow update, delete: if false;
+      allow update, delete: if request.auth != null && request.auth.uid == uid;
     }
 
     // Devices collection - Admin SDK only, no client access

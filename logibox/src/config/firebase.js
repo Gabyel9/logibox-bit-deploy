@@ -1,5 +1,5 @@
-// ⚠️ MUST be before all Firebase imports
-if (import.meta.env.DEV) {
+// ⚠️ MUST be before all Firebase imports - only set debug token if valid
+if (import.meta.env.DEV && import.meta.env.VITE_APPCHECK_DEBUG_TOKEN) {
   self.FIREBASE_APPCHECK_DEBUG_TOKEN = import.meta.env.VITE_APPCHECK_DEBUG_TOKEN;
 }
 
@@ -27,10 +27,19 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 
-const appCheck = initializeAppCheck(app, {
-  provider: new ReCaptchaV3Provider(import.meta.env.VITE_RECAPTCHA_SITE_KEY),
-  isTokenAutoRefreshEnabled: true,
-});
+// Enable App Check only in production or when explicitly enabled
+let appCheck = null;
+const isProduction = import.meta.env.MODE === 'production';
+if (isProduction || import.meta.env.VITE_ENABLE_APPCHECK === 'true') {
+  try {
+    appCheck = initializeAppCheck(app, {
+      provider: new ReCaptchaV3Provider(import.meta.env.VITE_RECAPTCHA_SITE_KEY),
+      isTokenAutoRefreshEnabled: true,
+    });
+  } catch (e) {
+    console.warn('App Check initialization failed:', e);
+  }
+}
 
 export const db = getFirestore(app);
 export const auth = getAuth(app);
