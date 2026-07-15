@@ -30,9 +30,9 @@ service cloud.firestore {
         'lastOtpGeneratedAt_1', 'lastOtpGeneratedAt_2', 'lastOtpGeneratedAt_3'
       ];
       return data.keys().hasOnly(allowed)
-        && data.keys().hasAny(['email', 'firstName', 'lastName'])
-        && isValidString(data.firstName, 50)
-        && isValidString(data.lastName, 50)
+        && data.keys().hasAny(['email'])
+        && (!('firstName' in data) || isValidString(data.firstName, 50))
+        && (!('lastName' in data) || isValidString(data.lastName, 50))
         && isValidString(data.email, 100)
         && isValidOptionalString(data.photoURL, 500);
     }
@@ -55,12 +55,13 @@ service cloud.firestore {
     // Helper function to validate vault fields
     function isValidVaultData(data) {
       let validStatuses = ['empty', 'assigned', 'otp_active', 'otp_expired', 'completed', 'occupied'];
+      validStatuses += ['available'];
       let validOtpStatuses = ['active', 'expired', 'used'];
       let allowed = [
         'id', 'status', 'enabled',
         'receiverName', 'contactNumber', 'parcelInfo', 'deliveryFee', 'createdAt',
         'otp', 'otpHash', 'otpEncrypted', 'otpStatus', 'otpCreatedAt', 'otpExpiresAt',
-        'lastOtpGeneratedAt', 'completedAt'
+        'lastOtpGeneratedAt', 'completedAt', 'ownerUid'
       ];
       return data.keys().hasOnly(allowed)
         && data.status is string

@@ -82,24 +82,25 @@ export function AuthProvider({ children }) {
         const lastName = nameParts.slice(1).join(' ') || '';
 
         try {
-          await setDoc(doc(db, 'users', firebaseUser.uid), {
+          // Only include fields with actual values (not empty strings)
+          const userData = {
             email: firebaseUser.email,
-            firstName,
-            lastName,
-            photoURL: firebaseUser.photoURL ?? null,
             provider: 'google',
             createdAt: serverTimestamp(),
             otpDuration: 5,
             otpAutoExpire: true,
-          }, { merge: true });
+          };
+          if (firstName) userData.firstName = firstName;
+          if (lastName) userData.lastName = lastName;
+          if (firebaseUser.photoURL) userData.photoURL = firebaseUser.photoURL;
+
+          await setDoc(doc(db, 'users', firebaseUser.uid), userData, { merge: true });
         } catch (e) {
           console.error('User profile create error:', e);
         }
       } else {
         try {
           await setDoc(doc(db, 'users', firebaseUser.uid), {
-            email: firebaseUser.email,
-            photoURL: firebaseUser.photoURL ?? null,
             lastLoginAt: serverTimestamp(),
           }, { merge: true });
         } catch (e) {
@@ -120,14 +121,17 @@ export function AuthProvider({ children }) {
       const result = await createUserWithEmailAndPassword(auth, email, password);
       await sendEmailVerification(result.user);
       try {
-        await setDoc(doc(db, 'users', result.user.uid), {
-          firstName,
-          lastName,
+        // Only include fields with actual values
+        const userData = {
           email,
           createdAt: serverTimestamp(),
           otpDuration: 5,
           otpAutoExpire: true,
-        });
+        };
+        if (firstName) userData.firstName = firstName;
+        if (lastName) userData.lastName = lastName;
+
+        await setDoc(doc(db, 'users', result.user.uid), userData);
       } catch (e) {
         console.error('User profile save error:', e);
       }
