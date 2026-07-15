@@ -30,9 +30,9 @@ service cloud.firestore {
         'lastOtpGeneratedAt_1', 'lastOtpGeneratedAt_2', 'lastOtpGeneratedAt_3'
       ];
       return data.keys().hasOnly(allowed)
-        && data.keys().hasAny(['email', 'firstName', 'lastName'])
+        && data.keys().hasAny(['email', 'firstName'])
         && isValidString(data.firstName, 50)
-        && isValidString(data.lastName, 50)
+        && isValidOptionalString(data.lastName, 50)
         && isValidString(data.email, 100)
         && isValidOptionalString(data.photoURL, 500);
     }
