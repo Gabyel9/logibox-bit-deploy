@@ -55,12 +55,13 @@ service cloud.firestore {
     // Helper function to validate vault fields
     function isValidVaultData(data) {
       let validStatuses = ['empty', 'assigned', 'otp_active', 'otp_expired', 'completed', 'occupied'];
+      validStatuses += ['available'];
       let validOtpStatuses = ['active', 'expired', 'used'];
       let allowed = [
         'id', 'status', 'enabled',
         'receiverName', 'contactNumber', 'parcelInfo', 'deliveryFee', 'createdAt',
         'otp', 'otpHash', 'otpEncrypted', 'otpStatus', 'otpCreatedAt', 'otpExpiresAt',
-        'lastOtpGeneratedAt', 'completedAt'
+        'lastOtpGeneratedAt', 'completedAt', 'ownerUid'
       ];
       return data.keys().hasOnly(allowed)
         && data.status is string

@@ -215,6 +215,13 @@ void handleEnterOtpKey(char key) {
   if (key == '*') {
     // Back to vault selection
     showScreen(SELECT_VAULT);
+  } else if (key == 'D') {
+    // Backspace - remove last digit if any
+    int len = strlen(otpInput);
+    if (len > 0) {
+      otpInput[len - 1] = '\0';
+      updateOtpDisplay();
+    }
   } else if (key == '#') {
     // Submit
     if (isLockedOutLocally()) {
@@ -233,16 +240,18 @@ void handleEnterOtpKey(char key) {
     otpInput[len + 1] = '\0';
     updateOtpDisplay();
   }
-  // A, B, C, D keys unused
+  // A, B, C keys unused
 }
 
 // ---------------- Screen Display Functions ----------------
 
 // Helper function to properly clear LCD - prevents ghosting/blurring
 void lcdClear() {
+  delay(30);  // Wait before clearing
   lcd.clear();
-  delay(10);  // Small delay for LCD to process
+  delay(50);  // Wait after clearing for LCD to process
   lcd.home();
+  delay(30);  // Extra wait
 }
 
 void showScreen(ScreenState state) {
@@ -272,7 +281,9 @@ void showScreen(ScreenState state) {
 }
 
 void showWelcomeScreen() {
-  lcdClear();
+  lcd.init();
+  lcd.backlight();
+  lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("LogiBox Vault");
   lcd.setCursor(0, 1);
@@ -309,7 +320,7 @@ void showEnterOtpScreen() {
   lcd.print(selectedVault);
   lcd.print(" - OTP:");
   lcd.setCursor(0, 1);
-  lcd.print("______  #=ok *=bk");
+  lcd.print("______  #=ok D=del");
 }
 
 void updateOtpDisplay() {
