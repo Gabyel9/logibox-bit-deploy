@@ -33,6 +33,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   const logActivity = async (uid, action, details) => {
+    if (!uid) return;
     try {
       await addDoc(collection(db, 'users', uid, 'activityLogs'), {
         action,

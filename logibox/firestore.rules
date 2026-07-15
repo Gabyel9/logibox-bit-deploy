@@ -30,8 +30,8 @@ service cloud.firestore {
         'lastOtpGeneratedAt_1', 'lastOtpGeneratedAt_2', 'lastOtpGeneratedAt_3'
       ];
       return data.keys().hasOnly(allowed)
-        && data.keys().hasAny(['email', 'firstName'])
-        && isValidString(data.firstName, 50)
+        && data.keys().hasAny(['email'])
+        && (!('firstName' in data) || isValidString(data.firstName, 50))
         && isValidOptionalString(data.lastName, 50)
         && isValidString(data.email, 100)
         && isValidOptionalString(data.photoURL, 500);
@@ -54,8 +54,7 @@ service cloud.firestore {
 
     // Helper function to validate vault fields
     function isValidVaultData(data) {
-      let validStatuses = ['empty', 'assigned', 'otp_active', 'otp_expired', 'completed', 'occupied'];
-      validStatuses += ['available'];
+      let validStatuses = ['empty', 'assigned', 'otp_active', 'otp_expired', 'completed', 'occupied', 'available'];
       let validOtpStatuses = ['active', 'expired', 'used'];
       let allowed = [
         'id', 'status', 'enabled',
@@ -97,18 +96,13 @@ service cloud.firestore {
           && isValidVaultData(request.resource.data);
         allow delete: if request.auth != null && request.auth.uid == uid;
       }
+    }
 
-      // User's activityLogs subcollection - append only
-      match /activityLogs/{logId} {
-        allow read: if request.auth != null && request.auth.uid == uid;
-        allow create: if request.auth != null
-          && request.auth.uid == uid
-          && isValidString(request.resource.data.action, 100)
-          && isValidOptionalString(request.resource.data.details, 500)
-          && request.resource.data.timestamp is timestamp
-          && (!('vaultId' in request.resource.data) || request.resource.data.vaultId is int);
-        allow update, delete: if false;
-      }
+    // User's activityLogs subcollection - append only
+    match /users/{uid}/activityLogs/{logId} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow create: if request.auth != null && request.auth.uid == uid;
+      allow update, delete: if false;
     }
 
     // Devices collection - Admin SDK only, no client access
