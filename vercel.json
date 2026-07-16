@@ -1,20 +1,9 @@
 {
   "buildCommand": "cd logibox && npm run build",
   "outputDirectory": "logibox/dist",
-  "routes": [
-    { "handle": "filesystem" },
-    { "src": "/api/.*", "dest": "/api/." },
-    { "src": "/.*", "dest": "/logibox/dist/index.html" }
-  ],
-  "headers": [
-    {
-      "source": "/(.*)",
-      "headers": [
-        {
-          "key": "Cross-Origin-Opener-Policy",
-          "value": "same-origin-allow-popups"
-        }
-      ]
-    }
+  "publicDirectory": "public",
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/(.*)", "destination": "/logibox/dist/index.html" }
   ]
 }
