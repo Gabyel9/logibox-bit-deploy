@@ -3,6 +3,10 @@
   "outputDirectory": "logibox/dist",
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/favicon.ico", "destination": "/logibox/dist/favicon.ico" },
+    { "source": "/favicon.svg", "destination": "/logibox/dist/favicon.svg" },
+    { "source": "/icons.svg", "destination": "/logibox/dist/icons.svg" },
+    { "source": "/LOGO LOGIBOX.png", "destination": "/logibox/dist/LOGO LOGIBOX.png" },
     { "source": "/(.*)", "destination": "/logibox/dist/index.html" }
   ],
   "headers": [
