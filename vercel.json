@@ -1,5 +1,5 @@
 {
-  "buildCommand": "cd logibox && npm run build && cp public/_redirects logibox/dist/_redirects && cp logibox/public/favicon.ico logibox/dist/favicon.ico",
+  "buildCommand": "cd logibox && npm run build",
   "outputDirectory": "logibox/dist",
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" },
