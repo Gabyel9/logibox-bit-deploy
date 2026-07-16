@@ -1,6 +1,11 @@
 {
   "buildCommand": "cd logibox && npm run build",
   "outputDirectory": "logibox/dist",
+  "routes": [
+    { "handle": "filesystem" },
+    { "src": "/api/.*", "dest": "/api/." },
+    { "src": "/.*", "dest": "/logibox/dist/index.html" }
+  ],
   "headers": [
     {
       "source": "/(.*)",
