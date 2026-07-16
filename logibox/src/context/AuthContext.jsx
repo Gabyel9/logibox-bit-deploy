@@ -110,26 +110,23 @@ export function AuthProvider({ children }) {
     try {
       const result = await createUserWithEmailAndPassword(auth, email, password);
       await sendEmailVerification(result.user);
-      try {
-        // Only include fields with actual values
-        const userData = {
-          email,
-          createdAt: serverTimestamp(),
-          otpDuration: 5,
-          otpAutoExpire: true,
-        };
-        if (firstName) userData.firstName = firstName;
-        if (lastName) userData.lastName = lastName;
 
-        await setDoc(doc(db, 'users', result.user.uid), userData);
-      } catch (e) {
-        console.error('User profile save error:', e);
-      }
-      try {
-        await logActivity(result.user.uid, 'Login', 'User created account');
-      } catch (e) {
-        console.error('Activity log error:', e);
-      }
+      // Save user profile - ensure names are trimmed and non-empty
+      const userData = {
+        email,
+        createdAt: serverTimestamp(),
+        otpDuration: 5,
+        otpAutoExpire: true,
+      };
+      // Only add names if they have actual content after trimming
+      const trimmedFirstName = firstName?.trim();
+      const trimmedLastName = lastName?.trim();
+      if (trimmedFirstName) userData.firstName = trimmedFirstName;
+      if (trimmedLastName) userData.lastName = trimmedLastName;
+
+      await setDoc(doc(db, 'users', result.user.uid), userData);
+
+      await logActivity(result.user.uid, 'Login', 'User created account');
     } catch (err) {
       setError(cleanError(err.message));
       throw err;
