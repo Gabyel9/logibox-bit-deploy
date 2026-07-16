@@ -41,7 +41,8 @@
       "Bash(tasklist)",
       "Bash(gh auth *)",
       "Bash(GIT_TRACE=1 git add logibox/firestore.rules)",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "Bash(git checkout *)"
     ]
   }
 }
