@@ -39,7 +39,7 @@ service cloud.firestore {
     }
 
     // Helper function to validate user fields for update
-    function isValidUserUpdate(data) {
+    function isValidUserUpdate() {
       let allowed = [
         'firstName', 'lastName', 'email', 'photoURL',
         'otpDuration', 'otpAutoExpire', 'lastLoginAt',
@@ -47,10 +47,10 @@ service cloud.firestore {
         'lastOtpGeneratedAt_1', 'lastOtpGeneratedAt_2', 'lastOtpGeneratedAt_3'
       ];
       return request.resource.data.keys().hasOnly(allowed)
-        && isValidOptionalString(data.firstName, 50)
-        && isValidOptionalString(data.lastName, 50)
-        && isValidOptionalString(data.email, 100)
-        && isValidOptionalString(data.photoURL, 500);
+        && isValidOptionalString(request.resource.data.firstName, 50)
+        && isValidOptionalString(request.resource.data.lastName, 50)
+        && isValidOptionalString(request.resource.data.email, 100)
+        && isValidOptionalString(request.resource.data.photoURL, 500);
     }
 
     // Helper function to validate vault fields
@@ -77,10 +77,7 @@ service cloud.firestore {
     // User profile - authenticated users can only access their own
     match /users/{uid} {
       allow read: if request.auth != null && request.auth.uid == uid;
-      allow create: if request.auth != null
-        && request.auth.uid == uid
-        && isValidUserCreate(request.resource.data);
-      allow update: if request.auth != null && request.auth.uid == uid;
+      allow write: if request.auth != null && request.auth.uid == uid;
 
       // User's vaults subcollection
       match /vaults/{vaultId} {
