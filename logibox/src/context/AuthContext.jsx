@@ -24,10 +24,25 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // Force refresh ID token after auth state changes to get updated claims
+  const refreshToken = async () => {
+    if (auth.currentUser) {
+      try {
+        await auth.currentUser.getIdToken(true);
+      } catch (e) {
+        console.error('Token refresh error:', e);
+      }
+    }
+  };
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setLoading(false);
+      // Refresh token to get latest claims (like email_verified)
+      if (currentUser) {
+        refreshToken();
+      }
     });
     return unsubscribe;
   }, []);

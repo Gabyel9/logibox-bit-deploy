@@ -31,7 +31,8 @@ service cloud.firestore {
       ];
       return data.keys().hasOnly(allowed)
         && data.keys().hasAny(['email'])
-        && (!('firstName' in data) || isValidString(data.firstName, 50))
+        // Allow empty/null firstName/lastName on create
+        && isValidOptionalString(data.firstName, 50)
         && isValidOptionalString(data.lastName, 50)
         && isValidString(data.email, 100)
         && isValidOptionalString(data.photoURL, 500);
@@ -46,10 +47,10 @@ service cloud.firestore {
         'lastOtpGeneratedAt_1', 'lastOtpGeneratedAt_2', 'lastOtpGeneratedAt_3'
       ];
       return request.resource.data.keys().hasOnly(allowed)
-        && (!('firstName' in data) || isValidString(data.firstName, 50))
-        && (!('lastName' in data) || isValidString(data.lastName, 50))
-        && (!('email' in data) || isValidString(data.email, 100))
-        && (!('photoURL' in data) || isValidOptionalString(data.photoURL, 500));
+        && isValidOptionalString(data.firstName, 50)
+        && isValidOptionalString(data.lastName, 50)
+        && isValidOptionalString(data.email, 100)
+        && isValidOptionalString(data.photoURL, 500);
     }
 
     // Helper function to validate vault fields
