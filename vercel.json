@@ -11,7 +11,7 @@
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://*.firebaseapp.com https://*.firebasestorage.app; connect-src 'self' https://firebase.googleapis.com https://*.firebaseapp.com https://*.firebasestorage.app https://accounts.google.com https://oauth2.googleapis.com https://www.googleapis.com https://securetoken.googleapis.com https://www.google.com https://recaptcha.google.com; frame-src https://www.google.com https://recaptcha.google.com;"
+          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.google.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://*.firebaseapp.com https://*.firebasestorage.app; connect-src 'self' https://firebase.googleapis.com https://*.firebaseapp.com https://*.firebasestorage.app https://accounts.google.com https://oauth2.googleapis.com https://www.googleapis.com https://securetoken.googleapis.com https://www.google.com https://recaptcha.google.com https://identitytoolkit.googleapis.com https://firestore.googleapis.com; frame-src https://www.google.com https://recaptcha.google.com;"
         },
         {
           "key": "X-Frame-Options",
