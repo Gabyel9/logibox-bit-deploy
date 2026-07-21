@@ -132,7 +132,8 @@ async function recordOtpGeneration(uid, vaultId) {
   const rateLimitDoc = await rateLimitDocRef.get();
 
   const now = Date.now();
-  const newGeneration = { timestamp: FieldValue.serverTimestamp() };
+  // Use regular Date, not FieldValue.serverTimestamp() (can't use FieldValue in arrays)
+  const newGeneration = { timestamp: new Date() };
 
   if (!rateLimitDoc.exists) {
     await rateLimitDocRef.set({
