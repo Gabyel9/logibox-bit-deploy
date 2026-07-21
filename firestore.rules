@@ -1,0 +1,116 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function to detect Admin SDK (service account)
+    function isServiceAccount() {
+      return request.auth != null && request.auth.token != null && request.auth.token.email != null;
+    }
+
+    // Helper function to validate vault ID
+    function isValidVaultId(vaultId) {
+      return vaultId in ['1', '2', '3'];
+    }
+
+    // Helper function to validate string fields
+    function isValidString(value, maxLen) {
+      return value is string && value.size() > 0 && value.size() <= maxLen;
+    }
+
+    function isValidOptionalString(value, maxLen) {
+      return value == null || (value is string && value.size() <= maxLen);
+    }
+
+    // Helper function to validate user fields for create
+    function isValidUserCreate(data) {
+      let allowed = [
+        'firstName', 'lastName', 'email', 'photoURL',
+        'otpDuration', 'otpAutoExpire', 'lastLoginAt',
+        'profileBackfilled', 'createdAt', 'provider',
+        'lastOtpGeneratedAt_1', 'lastOtpGeneratedAt_2', 'lastOtpGeneratedAt_3'
+      ];
+      return data.keys().hasOnly(allowed)
+        && data.keys().hasAny(['email'])
+        // Allow empty/null firstName/lastName on create
+        && isValidOptionalString(data.firstName, 50)
+        && isValidOptionalString(data.lastName, 50)
+        && isValidString(data.email, 100)
+        && isValidOptionalString(data.photoURL, 500);
+    }
+
+    // Helper function to validate user fields for update
+    function isValidUserUpdate() {
+      let allowed = [
+        'firstName', 'lastName', 'email', 'photoURL',
+        'otpDuration', 'otpAutoExpire', 'lastLoginAt',
+        'profileBackfilled', 'createdAt', 'provider',
+        'lastOtpGeneratedAt_1', 'lastOtpGeneratedAt_2', 'lastOtpGeneratedAt_3'
+      ];
+      return request.resource.data.keys().hasOnly(allowed)
+        && isValidOptionalString(request.resource.data.firstName, 50)
+        && isValidOptionalString(request.resource.data.lastName, 50)
+        && isValidOptionalString(request.resource.data.email, 100)
+        && isValidOptionalString(request.resource.data.photoURL, 500);
+    }
+
+    // Helper function to validate vault fields
+    function isValidVaultData(data) {
+      let validStatuses = ['empty', 'assigned', 'otp_active', 'otp_expired', 'completed', 'occupied', 'available'];
+      let validOtpStatuses = ['active', 'expired', 'used'];
+      let allowed = [
+        'id', 'status', 'enabled',
+        'receiverName', 'contactNumber', 'parcelInfo', 'deliveryFee', 'createdAt',
+        'otp', 'otpHash', 'otpEncrypted', 'otpStatus', 'otpCreatedAt', 'otpExpiresAt',
+        'lastOtpGeneratedAt', 'completedAt', 'ownerUid'
+      ];
+      return data.keys().hasOnly(allowed)
+        && data.status is string
+        && data.status in validStatuses
+        && (!('enabled' in data) || data.enabled is bool)
+        && (!('otpStatus' in data) || data.otpStatus == null || data.otpStatus in validOtpStatuses)
+        && isValidOptionalString(data.receiverName, 100)
+        && isValidOptionalString(data.contactNumber, 20)
+        && isValidOptionalString(data.parcelInfo, 200)
+        && (!('deliveryFee' in data) || data.deliveryFee == null || (data.deliveryFee is int && data.deliveryFee >= 0));
+    }
+
+    // User profile - authenticated users can only access their own
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if request.auth != null && request.auth.uid == uid;
+
+      // User's vaults subcollection
+      match /vaults/{vaultId} {
+        allow read: if request.auth != null && request.auth.uid == uid;
+        allow create: if request.auth != null && request.auth.uid == uid;
+        allow update: if request.auth != null && request.auth.uid == uid;
+        allow delete: if request.auth != null && request.auth.uid == uid;
+      }
+    }
+
+    // User's activityLogs subcollection - append only
+    match /users/{uid}/activityLogs/{logId} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow create: if request.auth != null && request.auth.uid == uid;
+      allow update, delete: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Devices collection - Admin SDK only, no client access
+    // Frontend never reads devices - all access goes through /api/device-verify-otp.js
+    // which uses Firebase Admin SDK (bypasses Firestore rules)
+    match /devices/{deviceId} {
+      // Deny all client access - only Admin SDK can access
+      allow read, write: if false;
+
+      // Device rate limits subcollection - Admin SDK only
+      match /rateLimits/{rateLimitId} {
+        allow read, write: if false;
+      }
+    }
+
+    // Deny everything else by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
