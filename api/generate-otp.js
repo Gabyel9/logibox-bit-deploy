@@ -1,8 +1,12 @@
-const { initializeApp, cert } = require('firebase-admin/app');
-const { getFirestore, FieldValue } = require('firebase-admin/firestore');
-const cors = require('cors')({ origin: true });
-const fs = require('fs');
-const path = require('path');
+import { initializeApp, cert } from 'firebase-admin/app';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import cors from 'cors';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Rate limiting constants for OTP generation
 const MAX_OTP_GENERATIONS = 3;
@@ -28,7 +32,17 @@ function loadServiceAccount() {
     }
   }
 
-  // 3. Try to read from service-account-key.json (local dev)
+  // 3. Check individual env vars
+  if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_PRIVATE_KEY) {
+    return {
+      type: 'service_account',
+      project_id: process.env.FIREBASE_PROJECT_ID,
+      client_email: process.env.FIREBASE_CLIENT_EMAIL,
+      private_key: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+    };
+  }
+
+  // 4. Try to read from service-account-key.json (local dev)
   const serviceAccountPath = path.join(process.cwd(), 'service-account-key.json');
   if (fs.existsSync(serviceAccountPath)) {
     try {
@@ -46,7 +60,7 @@ let adminDb;
 let adminInitialized = false;
 
 function getAdminDb() {
-  if (!adminDb) {
+  if (!adminInitialized) {
     const serviceAccount = loadServiceAccount();
 
     if (serviceAccount) {
@@ -145,8 +159,10 @@ async function recordOtpGeneration(uid, vaultId) {
   }
 }
 
-module.exports = async function handler(req, res) {
-  return cors(req, res, async () => {
+export default async function handler(req, res) {
+  const corsHandler = cors({ origin: true });
+
+  return corsHandler(req, res, async () => {
     // Only allow POST
     if (req.method !== 'POST') {
       return res.status(405).json({ error: 'Method not allowed' });
@@ -164,7 +180,7 @@ module.exports = async function handler(req, res) {
       }
 
       // Verify the ID token and get user info
-      const { getAuth } = require('firebase-admin/auth');
+      const { getAuth } = await import('firebase-admin/auth');
 
       // Ensure admin is initialized (this also initializes auth)
       getAdminDb();
