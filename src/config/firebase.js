@@ -1,4 +1,5 @@
-// ⚠️ MUST be before all Firebase imports - only set debug token if valid
+// ⚠️ MUST be before all Firebase imports
+// Use env var for local dev, or set to true to generate new token each run
 if (import.meta.env.DEV && import.meta.env.VITE_APPCHECK_DEBUG_TOKEN) {
   self.FIREBASE_APPCHECK_DEBUG_TOKEN = import.meta.env.VITE_APPCHECK_DEBUG_TOKEN;
 }
@@ -27,10 +28,11 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 
-// Enable App Check only in production or when explicitly enabled
+// Enable App Check in production and in development for local testing
 let appCheck = null;
 const isProduction = import.meta.env.MODE === 'production';
-if (isProduction || import.meta.env.VITE_ENABLE_APPCHECK === 'true') {
+const enableAppCheck = isProduction || import.meta.env.DEV || import.meta.env.VITE_ENABLE_APPCHECK === 'true';
+if (enableAppCheck) {
   try {
     appCheck = initializeAppCheck(app, {
       provider: new ReCaptchaV3Provider(import.meta.env.VITE_RECAPTCHA_SITE_KEY),

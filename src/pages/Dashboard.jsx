@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { collection, doc, setDoc, onSnapshot, writeBatch, addDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../config/firebase';
+import { db, auth } from '../config/firebase';
 import { generateSecureOTP, hashOTP } from '../utils/otp';
 import { encryptOTP, decryptOTP } from '../utils/crypto';
 import { sanitizeUserInput } from '../utils/sanitize';
@@ -79,6 +79,7 @@ function Dashboard() {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showWarningModal, setShowWarningModal] = useState(false);
   const [showOTPModal, setShowOTPModal] = useState(false);
+  const [rateLimitError, setRateLimitError] = useState(null);
   const [selectedVault, setSelectedVault] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
   const [currentOTP, setCurrentOTP] = useState(null);
@@ -87,6 +88,7 @@ function Dashboard() {
   const closeAndClearOTP = useCallback(() => {
     setShowOTPModal(false);
     setCurrentOTP(null);
+    setRateLimitError(null);
   }, []);
 
   const { msRemaining: otpTimeRemaining } = useVaultTimer(
@@ -177,8 +179,51 @@ function Dashboard() {
   }, [user]);
 
   const handleOpenOTPModal = useCallback(async (vault) => {
+    // First check client-side cooldown (UX first-line defense)
     if (isOtpOnCooldown(vault.id)) return;
 
+    // Clear any previous rate limit error
+    setRateLimitError(null);
+
+    // Get ID token for server verification
+    let idToken;
+    try {
+      idToken = await auth.currentUser?.getIdToken();
+    } catch (tokenError) {
+      console.error('Failed to get ID token:', tokenError);
+    }
+
+    // Call server-side rate limiting API
+    try {
+      const response = await fetch('/api/generate-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vaultId: vault.id,
+          idToken
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        if (response.status === 429 && result.error === 'rate_limit_exceeded') {
+          // Server-side rate limit hit - show clear message to user
+          const resetAt = result.resetAt ? new Date(result.resetAt) : null;
+          const waitSeconds = resetAt ? Math.ceil((resetAt.getTime() - Date.now()) / 1000) : 600;
+          setRateLimitError(`Please wait ${Math.ceil(waitSeconds / 60)} minute(s) before generating another OTP for this vault.`);
+          return;
+        }
+        // Other error - throw to catch block
+        throw new Error(result.error || 'Server rejected OTP generation');
+      }
+    } catch (apiError) {
+      console.error('OTP generation API error:', apiError);
+      // Don't block OTP generation on API error - fall through to local generation
+      // This ensures functionality works even if API is temporarily unavailable
+    }
+
+    // Server approved - generate OTP locally (same as before)
     const otp = generateOTP();
     const otpHash = await hashOTP(otp);
     const otpEncrypted = await encryptOTP(otp, user.uid);
@@ -751,6 +796,19 @@ function Dashboard() {
                                   ? `Wait ${Math.ceil(getCooldownRemaining(vault.id) / 1000)}s`
                                   : 'Generate OTP'}
                               </button>
+                            )}
+
+                            {/* Rate limit error message */}
+                            {rateLimitError && (
+                              <div style={{
+                                color: '#dc2626',
+                                fontSize: '0.75rem',
+                                marginTop: '0.5rem',
+                                textAlign: 'center',
+                                fontWeight: 500
+                              }}>
+                                {rateLimitError}
+                              </div>
                             )}
 
                             {vault.otpHash && isActive && currentOTP && (
