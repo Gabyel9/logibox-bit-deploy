@@ -222,8 +222,9 @@ export default async function handler(req, res) {
       });
 
     } catch (error) {
-      console.error('generate-otp API error:', error);
-      return res.status(500).json({ error: 'Internal server error' });
+      console.error('generate-otp API error:', error.message);
+      console.error('Stack:', error.stack);
+      return res.status(500).json({ error: error.message || 'Internal server error' });
     }
   });
 };
