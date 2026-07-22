@@ -1,28 +1,84 @@
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Rate limiting constants
 const MAX_OTP_ATTEMPTS = 5;
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 
+// Load service account key - try multiple sources
+function loadServiceAccount() {
+  console.log('loadServiceAccount: FIREBASE_SERVICE_ACCOUNT_KEY exists:', !!process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+  console.log('loadServiceAccount: FIREBASE_PROJECT_ID exists:', !!process.env.FIREBASE_PROJECT_ID);
+  console.log('loadServiceAccount: FIREBASE_PRIVATE_KEY exists:', !!process.env.FIREBASE_PRIVATE_KEY);
+
+  // 1. Check environment variable (for Vercel production)
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+    try {
+      const parsed = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+      console.log('loadServiceAccount: parsed service account key, has private_key:', !!parsed.private_key);
+      return parsed;
+    } catch (e) {
+      console.error('Failed to parse FIREBASE_SERVICE_ACCOUNT_KEY:', e.message);
+    }
+  }
+
+  // 2. Check individual env vars (legacy format)
+  if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_PRIVATE_KEY) {
+    console.log('loadServiceAccount: using legacy env vars');
+    return {
+      type: 'service_account',
+      project_id: process.env.FIREBASE_PROJECT_ID,
+      client_email: process.env.FIREBASE_CLIENT_EMAIL,
+      private_key: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+    };
+  }
+
+  // 3. Try to read from service-account-key.json (local dev)
+  const serviceAccountPath = path.join(process.cwd(), 'service-account-key.json');
+  if (fs.existsSync(serviceAccountPath)) {
+    try {
+      return JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
+    } catch (e) {
+      console.error('Failed to read service-account-key.json:', e);
+    }
+  }
+
+  console.log('loadServiceAccount: returning null - no credentials found!');
+  return null;
+}
+
 // Firebase Admin SDK - initialized once per cold start
 let db;
-function getDb() {
-  if (!db) {
-    const projectId = process.env.FIREBASE_PROJECT_ID;
-    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-    const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+let adminInitialized = false;
 
-    initializeApp({
-      projectId,
-      credential: cert({
-        projectId,
-        clientEmail,
-        privateKey,
-      }),
-    });
+function getDb() {
+  if (!adminInitialized) {
+    console.log('Initializing Firebase Admin...');
+    const serviceAccount = loadServiceAccount();
+
+    if (serviceAccount) {
+      console.log('Using service account from env');
+      initializeApp({ credential: cert(serviceAccount) });
+    } else {
+      console.log('No service account found, trying fallback');
+      // Fallback: Initialize with default credentials (same as generate-otp.js)
+      try {
+        initializeApp();
+      } catch (e) {
+        // App may already be initialized
+        console.warn('Firebase initialization warning:', e.message);
+      }
+    }
+    adminInitialized = true;
     db = getFirestore();
+    console.log('Firebase Admin initialized');
   }
   return db;
 }
@@ -234,11 +290,21 @@ export default async (req, res) => {
 
   } catch (error) {
     console.error('deviceVerifyOtp error:', error);
-    // Return more details for debugging (remove in production)
+
+    // Try to extract useful info from the error
+    let debugInfo = 'Unknown error';
+    if (error.code) {
+      debugInfo = `code:${error.code}`;
+    } else if (error.message) {
+      debugInfo = error.message.substring(0, 100);
+    } else {
+      debugInfo = String(error).substring(0, 100);
+    }
+
     return res.status(500).json({
       success: false,
       message: 'Internal server error',
-      debug: error.message || error.toString()
+      debug: debugInfo
     });
   }
 };
