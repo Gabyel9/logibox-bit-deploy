@@ -234,6 +234,11 @@ export default async (req, res) => {
 
   } catch (error) {
     console.error('deviceVerifyOtp error:', error);
-    return res.status(500).json({ success: false, message: 'Internal server error' });
+    // Return more details for debugging (remove in production)
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      debug: error.message || error.toString()
+    });
   }
 };
