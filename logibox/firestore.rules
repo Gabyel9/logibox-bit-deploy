@@ -86,6 +86,19 @@ service cloud.firestore {
         allow update: if request.auth != null && request.auth.uid == uid;
         allow delete: if request.auth != null && request.auth.uid == uid;
       }
+
+      // User's camera snapshot doc (written by Admin SDK via /api/camera-upload,
+      // read by the user's browser via onSnapshot)
+      match /camera/{snapshot} {
+        allow read: if request.auth != null && request.auth.uid == uid;
+        allow write: if request.auth != null && request.auth.uid == uid;
+      }
+
+      // Per-frame evidence history (also written by the Admin SDK API only).
+      match /cameraSnapshots/{docId} {
+        allow read: if request.auth != null && request.auth.uid == uid;
+        allow write: if false;
+      }
     }
 
     // User's activityLogs subcollection - append only
@@ -96,13 +109,15 @@ service cloud.firestore {
     }
 
     // Devices collection - Admin SDK only, no client access
+    // Frontend never reads devices - all access goes through /api/device-verify-otp.js
+    // which uses Firebase Admin SDK (bypasses Firestore rules)
     match /devices/{deviceId} {
-      // Allow all - will restrict later
-      allow read, write: if true;
+      // Deny all client access - only Admin SDK can access
+      allow read, write: if false;
 
       // Device rate limits subcollection - Admin SDK only
       match /rateLimits/{rateLimitId} {
-        allow read, write: if true;
+        allow read, write: if false;
       }
     }
 
