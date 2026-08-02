@@ -35,8 +35,10 @@
 #include <string.h>  // For strcpy, strlen
 
 // ---------------- CONFIG: EDIT THESE ----------------
-const char* WIFI_SSID     = "Converge_2.4GHz_zF2e";
-const char* WIFI_PASSWORD = "t2dnEvwC";
+//const char* WIFI_SSID     = "Converge_2.4GHz_zF2e";
+//const char* WIFI_PASSWORD = "t2dnEvwC";
+const char* WIFI_SSID     = "OPPO A94";
+const char* WIFI_PASSWORD = "password1";
 const char* DEVICE_ID     = "esp32-test-001"; // must match the device doc in Firestore
 
 const char* FUNCTION_URL  = "https://logibox-bit-deploy-3xzd.vercel.app/api/device-verify-otp";
@@ -46,6 +48,15 @@ const char* FUNCTION_URL  = "https://logibox-bit-deploy-3xzd.vercel.app/api/devi
 // the server re-validates this.
 const char* ALLOWED_VAULTS[] = {"1", "2", "3"};
 const int NUM_VAULTS = 3;
+
+// Door Controller ESP32 IP - change to match your ESP32 #2 IP
+const char* DOOR_CONTROLLER_IP = "192.168.1.150";
+const int DOOR_CONTROLLER_PORT = 80;
+
+// ESP32-CAM IP - the camera starts/stops capturing via LAN HTTP
+// Must match the static IP in LogiBox_ESP32CAM.ino
+const char* CAMERA_IP = "192.168.1.151";
+const int CAMERA_PORT = 80;
 // -----------------------------------------------------
 
 // ---------------- LCD (I2C) ----------------
@@ -162,6 +173,8 @@ void handleKeyPress(char key) {
   switch (currentState) {
     case WELCOME:
       // Any key goes to vault selection
+      // A session is starting - tell the ESP32-CAM to begin capturing
+      sendCameraCommand("start");
       showScreen(SELECT_VAULT);
       break;
 
@@ -191,13 +204,16 @@ void handleKeyPress(char key) {
 // SELECT_VAULT screen keys
 void handleSelectVaultKey(char key) {
   if (key == '*') {
-    // Go back to welcome
+    // Go back to welcome - stop the camera capture
+    sendCameraCommand("stop");
     showScreen(WELCOME);
   } else if (isDigit(key)) {
     // Check if it's an allowed vault - use char array
     char vault[2] = {key, '\0'};
     if (isVaultAllowed(vault)) {
       strcpy(selectedVault, vault);
+      // The vault is known now - label the camera session with it
+      sendCameraCommand("start", selectedVault);
       otpInput[0] = '\0';  // Clear otpInput
       showScreen(ENTER_OTP);
     } else {
@@ -399,6 +415,8 @@ void checkIdleTimeout() {
   } else if (currentState != LOCKOUT && currentState != VERIFYING) {
     // Check for return to WELCOME after idle
     if (millis() - lastActivityTime >= IDLE_TIMEOUT_MS) {
+      // Session timed out - stop the camera capture
+      sendCameraCommand("stop");
       showScreen(WELCOME);
     }
   }
@@ -508,6 +526,44 @@ bool ensureWiFiConnected() {
   return WiFi.status() == WL_CONNECTED;
 }
 
+// ---------------- Camera Control ----------------
+
+// Sends a LAN HTTP command to the ESP32-CAM to start/stop capturing.
+// Fires-and-forgets: failures are logged but never block the keypad flow.
+// vaultId (optional) labels the camera session with the vault being opened.
+void sendCameraCommand(const char* command) {
+  sendCameraCommand(command, "");
+}
+
+void sendCameraCommand(const char* command, const char* vaultId) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Camera command skipped: no WiFi");
+    return;
+  }
+
+  HTTPClient http;
+  http.setTimeout(5000);
+
+  String url = String("http://") + CAMERA_IP + ":" + CAMERA_PORT + "/" + command;
+  if (vaultId != NULL && vaultId[0] != '\0') {
+    url += "?vault=";
+    url += vaultId;
+  }
+
+  if (!http.begin(url)) {
+    Serial.println("Camera HTTP begin failed");
+    return;
+  }
+
+  int httpCode = http.GET();
+  Serial.print("Camera command ");
+  Serial.print(command);
+  Serial.print(" -> HTTP ");
+  Serial.println(httpCode);
+
+  http.end();
+}
+
 // ---------------- OTP Submission ----------------
 
 void submitOtp(const char* otp) {
@@ -561,16 +617,20 @@ void submitOtp(const char* otp) {
 }
 
 void handleResponse(int httpCode, String responseBody) {
-  StaticJsonDocument<300> resDoc;
+  StaticJsonDocument<512> resDoc;  // Increased size for debug info
   DeserializationError err = deserializeJson(resDoc, responseBody);
 
   String message = "";
+  String debugMsg = "";  // For server debug info
   bool success = false;
 
   if (!err) {
     success = resDoc["success"] | false;
     if (resDoc.containsKey("message")) {
       message = resDoc["message"].as<String>();
+    }
+    if (resDoc.containsKey("debug")) {
+      debugMsg = resDoc["debug"].as<String>();
     }
   }
 
@@ -582,8 +642,18 @@ void handleResponse(int httpCode, String responseBody) {
   if (httpCode == 200 && success) {
     clearLocalFailures();
     lastResultSuccess = true;
-    Serial.println(">>> VAULT OPEN ACTION GOES HERE (hardware not wired yet) <<<");
-    // TODO (SOLENOID): once relay/solenoid is wired up, trigger it here
+    Serial.println("OTP Verified! Calling door controller...");
+
+    // Send unlock command to Door Controller ESP32
+    bool doorOpened = sendUnlockToDoorController(selectedVault);
+
+    if (doorOpened) {
+      Serial.println("Door unlocked successfully!");
+    } else {
+      Serial.println("Warning: Door controller unreachable - showing success anyway");
+      // Note: We still show success because OTP was verified
+      // The door may not have opened due to network issues
+    }
   } else if (httpCode == 429) {
     // Server already rate-limited us; sync local lockout
     lockoutUntilMs = millis() + LOCAL_LOCKOUT_MS;
@@ -597,12 +667,22 @@ void handleResponse(int httpCode, String responseBody) {
   } else if (httpCode == 400) {
     lastResultMessage = message.length() ? message : "Bad request";
   } else if (httpCode == 500) {
-    lastResultMessage = "Server error";
+    // Show debug info if available, otherwise message, otherwise generic error
+    if (debugMsg.length() > 0) {
+      lastResultMessage = "Err: " + debugMsg;
+    } else {
+      lastResultMessage = message.length() ? message : "Server error";
+    }
   } else if (httpCode <= 0) {
     lastResultMessage = "Network error";
   } else {
     lastResultMessage = "Error: " + String(httpCode);
   }
 
+  // Print debug info to serial for troubleshooting
+  Serial.print("Response message: "); Serial.println(message);
+  Serial.print("Debug info: "); Serial.println(debugMsg);
+
   showScreen(RESULT);
-}
+}   
+

@@ -95,6 +95,19 @@ service cloud.firestore {
       allow update, delete: if request.auth != null && request.auth.uid == uid;
     }
 
+    // User's camera live snapshot (written by Admin SDK via /api/camera-upload,
+    // read by the user's browser via onSnapshot)
+    match /users/{uid}/camera/{snapshot} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Per-frame evidence history (also written by the Admin SDK API only)
+    match /users/{uid}/cameraSnapshots/{docId} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+
     // Devices collection - Admin SDK only, no client access
     // Frontend never reads devices - all access goes through /api/device-verify-otp.js
     // which uses Firebase Admin SDK (bypasses Firestore rules)
