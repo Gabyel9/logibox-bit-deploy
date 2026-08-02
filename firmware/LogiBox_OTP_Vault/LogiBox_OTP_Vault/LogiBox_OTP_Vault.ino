@@ -7,14 +7,15 @@
   Supports multiple vaults per device - user selects which vault to open
   from a menu, then enters OTP for that specific vault.
 
+  While a delivery session is active, the keypad tells the ESP32-CAM
+  (LogiBox_ESP32CAM.ino) to start/stop capturing via a LAN HTTP call.
+  The captured frames are stored in the web app as delivery evidence.
+
   Board: ESP32-S3-WROOM DevKit
   Libraries required (install via Arduino IDE Library Manager):
     - Keypad (Mark Stanley)
     - LiquidCrystal I2C (Frank de Brabander)
     - ArduinoJson (Benoit Blanchon)
-
-  HARDWARE STATUS: keypad + LCD only for now. Solenoid/relay wiring is
-  left as a TODO placeholder - search "SOLENOID" below when you add it.
 
   IMPORTANT: Fill in WIFI_SSID, WIFI_PASSWORD, and DEVICE_ID below
   before uploading. FUNCTION_URL is already set to your deployed
@@ -35,10 +36,8 @@
 #include <string.h>  // For strcpy, strlen
 
 // ---------------- CONFIG: EDIT THESE ----------------
-//const char* WIFI_SSID     = "Converge_2.4GHz_zF2e";
-//const char* WIFI_PASSWORD = "t2dnEvwC";
-const char* WIFI_SSID     = "OPPO A94";
-const char* WIFI_PASSWORD = "password1";
+const char* WIFI_SSID     = "Converge_2.4GHz_zF2e";
+const char* WIFI_PASSWORD = "t2dnEvwC";
 const char* DEVICE_ID     = "esp32-test-001"; // must match the device doc in Firestore
 
 const char* FUNCTION_URL  = "https://logibox-bit-deploy-3xzd.vercel.app/api/device-verify-otp";
@@ -48,10 +47,6 @@ const char* FUNCTION_URL  = "https://logibox-bit-deploy-3xzd.vercel.app/api/devi
 // the server re-validates this.
 const char* ALLOWED_VAULTS[] = {"1", "2", "3"};
 const int NUM_VAULTS = 3;
-
-// Door Controller ESP32 IP - change to match your ESP32 #2 IP
-const char* DOOR_CONTROLLER_IP = "192.168.1.150";
-const int DOOR_CONTROLLER_PORT = 80;
 
 // ESP32-CAM IP - the camera starts/stops capturing via LAN HTTP
 // Must match the static IP in LogiBox_ESP32CAM.ino
@@ -374,7 +369,7 @@ void showResultScreen() {
     lcd.setCursor(0, 1);
     lcd.print("Vault ");
     lcd.print(lastResultVault);
-    lcd.print(" unlocked");
+    lcd.print(" - OK");
   } else {
     // Check specific error types for appropriate message
     if (lastResultMessage.indexOf("not authorized") >= 0) {
@@ -642,18 +637,7 @@ void handleResponse(int httpCode, String responseBody) {
   if (httpCode == 200 && success) {
     clearLocalFailures();
     lastResultSuccess = true;
-    Serial.println("OTP Verified! Calling door controller...");
-
-    // Send unlock command to Door Controller ESP32
-    bool doorOpened = sendUnlockToDoorController(selectedVault);
-
-    if (doorOpened) {
-      Serial.println("Door unlocked successfully!");
-    } else {
-      Serial.println("Warning: Door controller unreachable - showing success anyway");
-      // Note: We still show success because OTP was verified
-      // The door may not have opened due to network issues
-    }
+    Serial.println("OTP Verified!");
   } else if (httpCode == 429) {
     // Server already rate-limited us; sync local lockout
     lockoutUntilMs = millis() + LOCAL_LOCKOUT_MS;
