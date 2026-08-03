@@ -286,7 +286,7 @@ void uploadFrame(camera_fb_t* fb) {
 
   http.addHeader("Content-Type", "application/octet-stream");
 
-  int httpCode = http.POST((const uint8_t*)fb->buf, fb->len);
+  int httpCode = http.POST(fb->buf, fb->len);
   lastHttpCode = httpCode;
 
   if (httpCode > 0) {
