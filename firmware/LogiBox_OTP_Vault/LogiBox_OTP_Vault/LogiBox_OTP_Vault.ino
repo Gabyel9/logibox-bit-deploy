@@ -549,8 +549,8 @@ void sendCameraCommand(const char* command, const char* vaultId) {
     return;
   }
 
-  IPAddress camIP;
-  if (!MDNS.queryHost(CAMERA_MDNS_HOST, 3000, &camIP)) {
+  IPAddress camIP = MDNS.queryHost(CAMERA_MDNS_HOST, 3000);
+  if (camIP == IPAddress()) {
     camIP.fromString(CAMERA_IP);
     Serial.print("mDNS lookup failed, falling back to ");
     Serial.println(CAMERA_IP);
