@@ -188,6 +188,11 @@ CAMERA DISCOVERY
   - CAMERA_IP in the keypad code is only a fallback if mDNS fails; set it to
     your network's range if you ever need it (e.g. 192.168.100.151).
 
+MOVING TO A NEW WIFI LATER
+--------------------------
+  See MOVING_TO_NEW_WIFI.txt for the step-by-step guide to connecting the
+  hardware to a different network (new site, or a phone hotspot).
+
 
 ================================================================================
                          PIN SUMMARY TABLE
