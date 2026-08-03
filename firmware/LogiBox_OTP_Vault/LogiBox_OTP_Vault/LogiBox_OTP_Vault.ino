@@ -415,8 +415,12 @@ void checkIdleTimeout() {
   } else if (currentState != LOCKOUT && currentState != VERIFYING) {
     // Check for return to WELCOME after idle
     if (millis() - lastActivityTime >= IDLE_TIMEOUT_MS) {
-      // Session timed out - stop the camera capture
-      sendCameraCommand("stop");
+      // Reset so this only fires once (was spamming stop every loop)
+      lastActivityTime = millis();
+      if (currentState != WELCOME) {
+        // An active session timed out - stop the camera capture
+        sendCameraCommand("stop");
+      }
       showScreen(WELCOME);
     }
   }
