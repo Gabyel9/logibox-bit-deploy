@@ -11,26 +11,33 @@
   Board: AI-Thinker ESP32-CAM (OV2640)
   Libraries required (Arduino Library Manager or git clone into Arduino/libraries):
     - esp32-camera  (https://github.com/espressif/esp32-camera)
-    - Built-in: WiFi, WebServer, HTTPClient, WiFiClientSecure
+    - WiFiManager   (tablatronix, via Library Manager)
+    - Built-in: WiFi, WebServer, HTTPClient, WiFiClientSecure, ESPmDNS
 
   IMPORTANT:
     - Must be on the SAME 2.4GHz WiFi network as the keypad ESP32.
+    - WiFi is configured with WiFiManager: on first boot (or when the saved
+      network is gone) this device starts a portal AP named "LogiBoxCam".
+      Join it from a phone, open http://192.168.4.1, and enter the WiFi
+      credentials once - they are stored in NVS and survive re-flashes.
+    - The keypad finds this camera via the mDNS hostname "logiboxcam".
     - The ESP32-CAM has no USB; use a USB-TTL adapter (3.3V) connected to
       GPIO1 (TX), GPIO3 (RX), GND, and hold GPIO0 to GND while plugging in
       to enter download mode.
-    - Keep the WiFi credentials in sync with LogiBox_OTP_Vault.ino.
 */
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <WebServer.h>
+#include <WiFiManager.h>
+#include <ESPmDNS.h>
 #include "esp_camera.h"
 #include <string.h>
 
 // ---------------- CONFIG: EDIT THESE ----------------
-const char* WIFI_SSID     = "Converge_2.4GHz_zF2e";
-const char* WIFI_PASSWORD = "t2dnEvwC";
+// WiFi credentials are NOT stored here - configure them once per device via
+// the WiFiManager portal (AP name "LogiBoxCam", http://192.168.4.1).
 
 // This device's ID - must match a device doc in Firestore:
 //   devices/esp32-cam-001 = { ownerUid: "<your uid>", status: "active" }
@@ -42,11 +49,8 @@ const char* FUNCTION_URL  = "https://logibox-bit-deploy-3xzd.vercel.app/api/came
 // Capture interval - 5 seconds keeps us under Firestore's free write quota
 const unsigned long CAPTURE_INTERVAL_MS = 5000;
 
-// Static IP for this ESP32-CAM (must be free on your network).
-// Set this to the IP the keypad ESP32 will call to start/stop the camera.
-IPAddress staticIP(192, 168, 1, 151);
-IPAddress gateway(192, 168, 1, 1);
-IPAddress subnet(255, 255, 255, 0);
+// mDNS hostname the keypad uses to find this camera on the LAN.
+const char* MDNS_HOSTNAME = "logiboxcam";
 // -----------------------------------------------------
 
 // ---------------- Camera State ----------------
@@ -94,9 +98,10 @@ void setup() {
   setupRoutes();
 
   Serial.println("ESP32-CAM ready!");
-  Serial.print("IP Address: ");
-  Serial.println(WiFi.localIP());
   Serial.print("Stream control: http://");
+  Serial.print(MDNS_HOSTNAME);
+  Serial.println(".local/start");
+  Serial.print("or via IP: http://");
   Serial.print(WiFi.localIP());
   Serial.println("/start");
 }
@@ -159,26 +164,32 @@ void initCamera() {
 // ---------------- WiFi ----------------
 
 void connectWiFi() {
-  Serial.println("Connecting to WiFi...");
-
-  if (!WiFi.config(staticIP, gateway, subnet)) {
-    Serial.println("Failed to configure static IP");
-  }
+  Serial.println("Connecting to WiFi via WiFiManager...");
 
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
+  WiFiManager wm;
+  wm.setConfigPortalTimeout(180); // give 3 min for phone setup, then reboot
+
+  wm.setAPCallback([](WiFiManager* wm) {
+    Serial.println("\n=== WIFI SETUP REQUIRED ===");
+    Serial.println("Join the 'LogiBoxCam' hotspot from your phone,");
+    Serial.println("open http://192.168.4.1 and enter your WiFi credentials.");
+  });
+
+  if (!wm.autoConnect("LogiBoxCam")) {
+    Serial.println("\nWiFi FAILED to connect!");
+    return;
   }
 
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nWiFi connected!");
-  } else {
-    Serial.println("\nWiFi FAILED to connect!");
+  Serial.println("\nWiFi connected!");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
+
+  if (MDNS.begin(MDNS_HOSTNAME)) {
+    Serial.print("mDNS started: ");
+    Serial.print(MDNS_HOSTNAME);
+    Serial.println(".local");
   }
 }
 

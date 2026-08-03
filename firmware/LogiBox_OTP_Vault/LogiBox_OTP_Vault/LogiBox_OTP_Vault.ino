@@ -16,19 +16,22 @@
     - Keypad (Mark Stanley)
     - LiquidCrystal I2C (Frank de Brabander)
     - ArduinoJson (Benoit Blanchon)
+    - WiFiManager (tablatronix)
 
-  IMPORTANT: Fill in WIFI_SSID, WIFI_PASSWORD, and DEVICE_ID below
-  before uploading. FUNCTION_URL is already set to your deployed
-  Vercel endpoint.
+  WiFi credentials are configured once per device via WiFiManager:
+  on first boot (or when the saved network is gone) this keypad starts a
+  portal AP named "LogiBoxKeypad". Join it from a phone, open
+  http://192.168.4.1, and enter the WiFi credentials. They are stored in
+  NVS and survive re-flashes. The LCD shows the AP name during setup.
 
-  NOTE ON SECRETS: don't commit this file with real WiFi credentials
-  filled in. Move WIFI_SSID/WIFI_PASSWORD into a separate secrets.h
-  that's in your .gitignore once you're past bench testing.
+  FUNCTION_URL and DEVICE_ID are set below.
 */
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include <WiFiManager.h>
+#include <ESPmDNS.h>
 #include <ArduinoJson.h>
 #include <Keypad.h>
 #include <Wire.h>
@@ -36,8 +39,8 @@
 #include <string.h>  // For strcpy, strlen
 
 // ---------------- CONFIG: EDIT THESE ----------------
-const char* WIFI_SSID     = "Converge_2.4GHz_zF2e";
-const char* WIFI_PASSWORD = "t2dnEvwC";
+// WiFi credentials are NOT stored here - configure them once per device via
+// the WiFiManager portal (AP name "LogiBoxKeypad", http://192.168.4.1).
 const char* DEVICE_ID     = "esp32-test-001"; // must match the device doc in Firestore
 
 const char* FUNCTION_URL  = "https://logibox-bit-deploy-3xzd.vercel.app/api/device-verify-otp";
@@ -48,9 +51,11 @@ const char* FUNCTION_URL  = "https://logibox-bit-deploy-3xzd.vercel.app/api/devi
 const char* ALLOWED_VAULTS[] = {"1", "2", "3"};
 const int NUM_VAULTS = 3;
 
-// ESP32-CAM IP - the camera starts/stops capturing via LAN HTTP
-// Must match the static IP in LogiBox_ESP32CAM.ino
-const char* CAMERA_IP = "192.168.1.151";
+// ESP32-CAM discovery. The keypad first resolves the camera's mDNS
+// hostname "logiboxcam" (works on any WiFi network). CAMERA_IP is only
+// a fallback if mDNS resolution fails.
+const char* CAMERA_MDNS_HOST = "logiboxcam";
+const char* CAMERA_IP = "192.168.100.151";
 const int CAMERA_PORT = 80;
 // -----------------------------------------------------
 
@@ -479,30 +484,38 @@ const char* stateToString(ScreenState state) {
 
 void connectWiFi() {
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
-  }
+  WiFiManager wm;
+  wm.setConfigPortalTimeout(180); // give 3 min for phone setup, then reboot
 
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nWiFi connected. IP: " + WiFi.localIP().toString());
+  wm.setAPCallback([](WiFiManager* wm) {
     lcdClear();
     lcd.setCursor(0, 0);
-    lcd.print("WiFi Connected");
-    delay(1000);
-  } else {
+    lcd.print("Join WiFi:");
+    lcd.setCursor(0, 1);
+    lcd.print("LogiBoxKeypad");
+    Serial.println("\n=== WIFI SETUP REQUIRED ===");
+    Serial.println("Join the 'LogiBoxKeypad' hotspot from your phone,");
+    Serial.println("open http://192.168.4.1 and enter your WiFi credentials.");
+  });
+
+  if (!wm.autoConnect("LogiBoxKeypad")) {
     Serial.println("\nWiFi FAILED to connect.");
     lcdClear();
     lcd.setCursor(0, 0);
     lcd.print("WiFi FAILED");
     lcd.setCursor(0, 1);
-    lcd.print("Check credentials");
+    lcd.print("Retrying setup...");
     delay(3000);
+    return;
   }
+
+  Serial.println("\nWiFi connected. IP: " + WiFi.localIP().toString());
+  MDNS.begin("logiboxkeypad");
+  lcdClear();
+  lcd.setCursor(0, 0);
+  lcd.print("WiFi Connected");
+  delay(1000);
 }
 
 bool ensureWiFiConnected() {
@@ -536,10 +549,22 @@ void sendCameraCommand(const char* command, const char* vaultId) {
     return;
   }
 
+  IPAddress camIP;
+  if (!MDNS.queryHost(CAMERA_MDNS_HOST, 3000, &camIP)) {
+    camIP.fromString(CAMERA_IP);
+    Serial.print("mDNS lookup failed, falling back to ");
+    Serial.println(CAMERA_IP);
+  } else {
+    Serial.print("mDNS resolved ");
+    Serial.print(CAMERA_MDNS_HOST);
+    Serial.print(" -> ");
+    Serial.println(camIP.toString());
+  }
+
   HTTPClient http;
   http.setTimeout(5000);
 
-  String url = String("http://") + CAMERA_IP + ":" + CAMERA_PORT + "/" + command;
+  String url = String("http://") + camIP.toString() + ":" + CAMERA_PORT + "/" + command;
   if (vaultId != NULL && vaultId[0] != '\0') {
     url += "?vault=";
     url += vaultId;

@@ -44,17 +44,19 @@ WIRING (unchanged)
   LCD (I2C)     -> GPIO 1 (TX), GPIO 3 (RX), 5V, GND  (address 0x27)
 
 CODE CONFIG (LogiBox_OTP_Vault.ino)
------------------------------------
-  - WIFI_SSID / WIFI_PASSWORD: your 2.4GHz network
+----------------------------------
   - DEVICE_ID: must match a device doc in Firestore, e.g. devices/esp32-test-001
   - FUNCTION_URL: your deployed /api/device-verify-otp endpoint
-  - CAMERA_IP: static IP of the ESP32-CAM (see Part 2), default 192.168.1.151
+  - CAMERA_IP: fallback IP of the ESP32-CAM (used only if mDNS fails),
+    default 192.168.100.151 (see "WIFI & NETWORK SETUP" below)
+  - WiFi credentials are NOT in the code. They are set once per device via
+    the WiFiManager portal (see "WIFI & NETWORK SETUP" below).
 
 UPLOAD
 ------
   1. Open LogiBox_OTP_Vault.ino in Arduino IDE
   2. Board: ESP32-S3 Dev Module, USB CDC on boot enabled
-  3. Install libraries: Keypad, LiquidCrystal I2C, ArduinoJson
+  3. Install libraries: Keypad, LiquidCrystal I2C, ArduinoJson, WiFiManager (tablatronix)
   4. Upload and open Serial Monitor @ 115200
 
 
@@ -81,23 +83,25 @@ FLASHING
      - Flash: 4MB
      - Partition: Huge APP
      - Flash Mode: QIO
-  4. Install library: esp32-camera (espressif)
-  5. Select the USB-TTL serial port and upload
-  6. Remove the GPIO0-to-GND jumper and press the reset button
-  7. Open Serial Monitor @ 115200 and note the static IP (default 192.168.1.151)
+   4. Install libraries: esp32-camera (espressif), WiFiManager (tablatronix)
+   5. Select the USB-TTL serial port and upload
+   6. Remove the GPIO0-to-GND jumper and press the reset button
+   7. Open Serial Monitor @ 115200 and note the assigned IP + mDNS hostname
 
 CODE CONFIG (LogiBox_ESP32CAM.ino)
------------------------------------
-  - WIFI_SSID / WIFI_PASSWORD: MUST be the SAME network as the keypad ESP32
+----------------------------------
   - DEVICE_ID: devices/esp32-cam-001 in Firestore (ownerUid must be set)
   - FUNCTION_URL: your deployed /api/camera-upload endpoint
-  - staticIP: must match CAMERA_IP in LogiBox_OTP_Vault.ino (default 192.168.1.151)
+  - MDNS_HOSTNAME: "logiboxcam" (the keypad resolves this to find the camera)
+  - WiFi credentials are NOT in the code - set them via the portal
+    (see "WIFI & NETWORK SETUP" below).
 
 CAMERA COMMANDS (LAN HTTP)
 --------------------------
-  http://192.168.1.151/start         -> begin capturing every 5 seconds
-  http://192.168.1.151/start?vault=2 -> begin capturing, tag session "vault 2"
-  http://192.168.1.151/stop          -> stop capturing
+  http://logiboxcam.local/start          -> begin capturing every 5 seconds
+  http://logiboxcam.local/start?vault=2  -> begin capturing, tag session "vault 2"
+  http://logiboxcam.local/stop           -> stop capturing
+  (or use the camera's assigned IP printed in Serial after boot)
 
 The keypad calls these automatically when a delivery session starts/stops.
 
@@ -109,7 +113,7 @@ The keypad calls these automatically when a delivery session starts/stops.
 TEST 1: CAMERA ALONE
 --------------------
   1. Power the ESP32-CAM on the same WiFi as the keypad
-  2. Visit http://192.168.1.151/start in a browser
+  2. Visit http://logiboxcam.local/start (or the IP printed in Serial) in a browser
   3. Open the web app -> Camera page -> "Captured Sessions"
   4. A session with new frames should appear every 5 seconds
 
@@ -143,7 +147,7 @@ PROBLEM: No frames captured
 SOLUTION:
   - Check the ESP32-CAM Serial Monitor for upload errors (HTTP code)
   - Verify FUNCTION_URL points to your deployed /api/camera-upload
-  - Make sure the ESP32-CAM's WiFi credentials match the keypad's
+  - Make sure both ESP32s joined the SAME network (set via the portal)
 
 PROBLEM: Camera works but session label is missing/empty
 SOLUTION:
@@ -152,20 +156,37 @@ SOLUTION:
 
 
 ================================================================================
-                         IP ADDRESS SETTINGS
+                         WIFI & NETWORK SETUP
 ================================================================================
 
-Both firmwares use static IPs on the same subnet. Adjust to your network:
+No WiFi credentials are stored in the firmware. Each device is configured
+ONCE via the WiFiManager captive portal - this is also how you move the
+hardware to a different network later without editing or re-flashing code.
 
-  LogiBox_ESP32CAM.ino:
-    IPAddress staticIP(192, 168, 1, 151);
-    IPAddress gateway(192, 168, 1, 1);
-    IPAddress subnet(255, 255, 255, 0);
+FIRST-TIME WIFI SETUP (per device)
+----------------------------------
+  1. Power the device. If it has no saved network it starts a portal hotspot:
+       ESP32-CAM  -> AP name "LogiBoxCam"
+       Keypad     -> AP name "LogiBoxKeypad" (LCD shows "Join WiFi: LogiBoxKeypad")
+  2. From a phone, join that hotspot (no password).
+  3. Open http://192.168.4.1 in the phone browser.
+  4. Pick your WiFi network, enter its password, save.
+  5. Device reboots and connects. Set up the other device the same way -
+     BOTH must be on the SAME network so the keypad can reach the camera.
 
-  LogiBox_OTP_Vault.ino: CAMERA_IP must match the ESP32-CAM's staticIP.
+CHANGING NETWORKS LATER (e.g. deploying at a site)
+--------------------------------------------------
+  - The credentials are saved in NVS and survive re-flashes.
+  - To change network: power-cycle the device while its current network is
+    unavailable (or wait for it to fail to connect) - the portal AP restarts.
+    Re-run the steps above. No code changes, no laptop needed.
 
-To find your network settings:
-  - Windows: "ipconfig" -> Default Gateway / Subnet Mask
+CAMERA DISCOVERY
+----------------
+  - The camera advertises the mDNS hostname "logiboxcam". The keypad resolves
+    it automatically, so it works on ANY network (DHCP IP, no static config).
+  - CAMERA_IP in the keypad code is only a fallback if mDNS fails; set it to
+    your network's range if you ever need it (e.g. 192.168.100.151).
 
 
 ================================================================================
@@ -200,6 +221,6 @@ ESP32 #1 (Keypad/LCD):
 ================================================================================
 
 Created: July 2026
-Updated: August 2026 (removed door controller; single ESP + camera)
+Updated: August 2026 (WiFiManager portal + mDNS camera discovery; door controller removed)
 For: LogiBox OTP Vault System
 ================================================================================
