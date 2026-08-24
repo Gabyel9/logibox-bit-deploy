@@ -4,6 +4,11 @@
   Captures a JPEG every CAPTURE_INTERVAL_MS while "capturing" and uploads it
   to the LogiBox web app via the Vercel /api/camera-upload endpoint.
 
+  NON-BLOCKING: capture + upload run in a background task on core 0, so the
+  web server (main loop) keeps answering /start, /stop and /status instantly
+  even while a slow upload is in flight. If an upload is still running when
+  the next capture interval fires, that frame is skipped - no backlog.
+
   The capture loop is started/stopped by the keypad ESP32 (LogiBox_OTP_Vault):
       http://<THIS_IP>/start   -> begin capturing
       http://<THIS_IP>/stop    -> stop capturing
@@ -11,26 +16,45 @@
   Board: AI-Thinker ESP32-CAM (OV2640)
   Libraries required (Arduino Library Manager or git clone into Arduino/libraries):
     - esp32-camera  (https://github.com/espressif/esp32-camera)
-    - Built-in: WiFi, WebServer, HTTPClient, WiFiClientSecure
+    - WiFiManager   (tablatronix, via Library Manager)
+    - Built-in: WiFi, WebServer, HTTPClient, WiFiClientSecure, ESPmDNS
 
   IMPORTANT:
     - Must be on the SAME 2.4GHz WiFi network as the keypad ESP32.
+    - WiFi is configured with WiFiManager: on first boot (or when the saved
+      network is gone) this device starts a portal AP named "LogiBoxCam".
+      Join it from a phone, open http://192.168.4.1, and enter the WiFi
+      credentials once - they are stored in NVS and survive re-flashes.
+    - To join a DIFFERENT WiFi network later: power the camera on, wait
+      about 2 seconds, then press and HOLD the FLASH button (GPIO0) for
+      3 seconds, then RELEASE it. The camera wipes its saved WiFi and
+      reopens the "LogiBoxCam" portal - join it from a phone, open
+      http://192.168.4.1, and enter the new network's credentials.
+    - NOTE: GPIO0 is the camera's XCLK pin and a boot-strap pin. On the
+      AI-Thinker board the flash LED is GPIO4; the physical FLASH button
+      only exists on the ESP32-CAM-MB programmer board (GPIO0 to GND).
+      Do NOT hold GPIO0 while powering on - that puts the chip in
+      download (flash) mode instead of running this sketch.
+    - The keypad finds this camera via the mDNS hostname "logiboxcam".
     - The ESP32-CAM has no USB; use a USB-TTL adapter (3.3V) connected to
       GPIO1 (TX), GPIO3 (RX), GND, and hold GPIO0 to GND while plugging in
       to enter download mode.
-    - Keep the WiFi credentials in sync with LogiBox_OTP_Vault.ino.
 */
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <WebServer.h>
+#include <WiFiManager.h>
+#include <ESPmDNS.h>
 #include "esp_camera.h"
 #include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 // ---------------- CONFIG: EDIT THESE ----------------
-const char* WIFI_SSID     = "Converge_2.4GHz_zF2e";
-const char* WIFI_PASSWORD = "t2dnEvwC";
+// WiFi credentials are NOT stored here - configure them once per device via
+// the WiFiManager portal (AP name "LogiBoxCam", http://192.168.4.1).
 
 // This device's ID - must match a device doc in Firestore:
 //   devices/esp32-cam-001 = { ownerUid: "<your uid>", status: "active" }
@@ -42,11 +66,15 @@ const char* FUNCTION_URL  = "https://logibox-bit-deploy-3xzd.vercel.app/api/came
 // Capture interval - 5 seconds keeps us under Firestore's free write quota
 const unsigned long CAPTURE_INTERVAL_MS = 5000;
 
-// Static IP for this ESP32-CAM (must be free on your network).
-// Set this to the IP the keypad ESP32 will call to start/stop the camera.
-IPAddress staticIP(192, 168, 1, 151);
-IPAddress gateway(192, 168, 1, 1);
-IPAddress subnet(255, 255, 255, 0);
+// mDNS hostname the keypad uses to find this camera on the LAN.
+const char* MDNS_HOSTNAME = "logiboxcam";
+
+// GPIO0 is the FLASH button on the ESP32-CAM-MB programmer board (it
+// connects GPIO0 to GND). Hold it for ~3 seconds shortly after power-on to
+// erase saved WiFi settings and reopen the "LogiBoxCam" setup portal (use
+// this to join a NEW WiFi network). GPIO0 must be read BEFORE the camera is
+// initialized, because the camera driver uses it as the 20MHz XCLK clock.
+#define FORCE_PORTAL_BUTTON_GPIO 0
 // -----------------------------------------------------
 
 // ---------------- Camera State ----------------
@@ -56,6 +84,12 @@ unsigned long lastCaptureTime = 0;
 unsigned long framesUploaded = 0;
 unsigned long lastUploadMs = 0;
 int lastHttpCode = 0;
+
+// Capture + upload run in a background task so the web server never blocks.
+// The main loop only flags that a frame is due; if a previous upload is still
+// running, the frame is skipped (no backlog) instead of freezing /stop,/start.
+TaskHandle_t uploadTaskHandle = NULL;
+volatile bool uploadPending = false;
 
 // Delivery session state. Every frame uploaded during a session is tagged with
 // these so the web app can group them and label the session with a vault id.
@@ -87,16 +121,48 @@ void setup() {
   Serial.println("=== LogiBox ESP32-CAM Starting ===");
   delay(300);
 
+  // Check for the force-portal button BEFORE the camera is initialized.
+  // GPIO0 doubles as the camera's XCLK clock and as a boot-strap pin, so it
+  // can only be read cleanly at this point, right after power-on.
+  Serial.println("(To force WiFi setup: within ~5s hold FLASH for 3s.)");
+  if (forcePortalRequested()) {
+    Serial.println("\n=== FORCE SETUP PORTAL ===");
+    Serial.println("FLASH button held 3s - erasing saved WiFi settings.");
+
+    WiFiManager wm;
+    wm.resetSettings();
+    delay(1000);
+    Serial.println("Saved WiFi erased.");
+    Serial.println("RELEASE the FLASH button now, then join the 'LogiBoxCam'");
+    Serial.println("hotspot from your phone and open http://192.168.4.1");
+
+    // Only reboot once the button is released: GPIO0 held low during reset
+    // would strap the chip into download mode instead of running the sketch.
+    // If it is still held, fall through - with no saved network, the portal
+    // opens in this boot anyway.
+    if (waitForRelease()) {
+      Serial.println("Button released. Rebooting into the setup portal...");
+      delay(500);
+      ESP.restart();
+    } else {
+      Serial.println("Button still held - continuing; portal will still open.");
+    }
+  }
+
   initCamera();
 
   connectWiFi();
 
   setupRoutes();
 
+  // Background task handles capture + upload so the web server never blocks.
+  xTaskCreatePinnedToCore(uploadTask, "upload", 8192, NULL, 1, &uploadTaskHandle, 0);
+
   Serial.println("ESP32-CAM ready!");
-  Serial.print("IP Address: ");
-  Serial.println(WiFi.localIP());
   Serial.print("Stream control: http://");
+  Serial.print(MDNS_HOSTNAME);
+  Serial.println(".local/start");
+  Serial.print("or via IP: http://");
   Serial.print(WiFi.localIP());
   Serial.println("/start");
 }
@@ -106,7 +172,21 @@ void loop() {
 
   if (capturing && millis() - lastCaptureTime >= CAPTURE_INTERVAL_MS) {
     lastCaptureTime = millis();
-    captureAndUpload();
+    if (!uploadPending) {
+      uploadPending = true;  // if a previous upload is still running, skip this frame
+    }
+  }
+}
+
+// Runs on core 0. Does the slow capture + upload work so the web server on
+// the main loop keeps answering /start, /stop, /status instantly.
+void uploadTask(void* param) {
+  for (;;) {
+    if (uploadPending) {
+      uploadPending = false;
+      captureAndUpload();
+    }
+    vTaskDelay(pdMS_TO_TICKS(20));
   }
 }
 
@@ -159,27 +239,96 @@ void initCamera() {
 // ---------------- WiFi ----------------
 
 void connectWiFi() {
-  Serial.println("Connecting to WiFi...");
-
-  if (!WiFi.config(staticIP, gateway, subnet)) {
-    Serial.println("Failed to configure static IP");
-  }
+  Serial.println("Connecting to WiFi via WiFiManager...");
 
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
-  }
+  WiFiManager wm;
+  wm.setConfigPortalTimeout(180); // give 3 min for phone setup, then reboot
 
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nWiFi connected!");
+  String savedSSID = wm.getWiFiSSID();
+  if (savedSSID.length() > 0) {
+    Serial.print("Saved WiFi network: ");
+    Serial.println(savedSSID);
   } else {
-    Serial.println("\nWiFi FAILED to connect!");
+    Serial.println("No saved WiFi network - first boot or settings erased.");
   }
+
+  wm.setAPCallback([](WiFiManager* wm) {
+    Serial.println("\n=== WIFI SETUP REQUIRED ===");
+    Serial.println("Join the 'LogiBoxCam' hotspot from your phone,");
+    Serial.println("open http://192.168.4.1 and enter your WiFi credentials.");
+  });
+
+  if (!wm.autoConnect("LogiBoxCam")) {
+    Serial.println("\nWiFi FAILED to connect!");
+    return;
+  }
+
+  Serial.println("\nWiFi connected!");
+  Serial.print("Network (SSID): ");
+  Serial.println(WiFi.SSID());
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
+
+  if (MDNS.begin(MDNS_HOSTNAME)) {
+    Serial.print("mDNS started: ");
+    Serial.print(MDNS_HOSTNAME);
+    Serial.println(".local");
+  }
+}
+
+// Returns true if the FLASH button (GPIO0) is held down for ~3 seconds within
+// a short window right after power-on. Used to force the setup portal so the
+// camera can join a new WiFi network.
+// MUST be called BEFORE initCamera(): the camera driver reconfigures GPIO0 as
+// the 20MHz XCLK clock, which makes the button unreadable.
+bool forcePortalRequested() {
+  // How long to keep listening for a button press after boot (gives you time
+  // to press the FLASH button once the board is powered up). A press starting
+  // at any point within this window still gets its full 3s hold (see below).
+  const unsigned long WINDOW_MS = 10000;
+  // How long the button must be held continuously to trigger the portal.
+  const unsigned long HOLD_MS   = 3000;
+
+  pinMode(FORCE_PORTAL_BUTTON_GPIO, INPUT_PULLUP);
+  delay(100); // let the line settle
+
+  unsigned long windowStart = millis();
+  unsigned long heldSince = 0;
+
+  // Keep listening until the window lapses AND no hold is in progress. Once a
+  // press starts, we keep waiting so the hold can finish even if the window
+  // would otherwise expire mid-hold.
+  while (millis() - windowStart < WINDOW_MS || heldSince > 0) {
+    if (digitalRead(FORCE_PORTAL_BUTTON_GPIO) == LOW) {
+      if (heldSince == 0) {
+        heldSince = millis();
+      }
+      if (millis() - heldSince >= HOLD_MS) {
+        return true; // held for the full 3 seconds
+      }
+    } else {
+      heldSince = 0; // released too early - start counting again
+    }
+    delay(20);
+  }
+  return false; // never held long enough during the window
+}
+
+// Blocks until the FLASH button (GPIO0) is released, or until a timeout.
+// Returns true if it was released. Needed before rebooting: GPIO0 held low
+// during reset straps the chip into download mode, so the sketch never runs.
+bool waitForRelease() {
+  const unsigned long TIMEOUT_MS = 10000;
+  unsigned long start = millis();
+  while (millis() - start < TIMEOUT_MS) {
+    if (digitalRead(FORCE_PORTAL_BUTTON_GPIO) != LOW) {
+      return true; // released
+    }
+    delay(50);
+  }
+  return false; // still held after the timeout
 }
 
 // ---------------- Web Server Routes ----------------
@@ -225,6 +374,17 @@ void setupRoutes() {
     json += "\"capturing\":" + String(capturing ? "true" : "false") + ",";
     json += "\"framesUploaded\":" + String(framesUploaded) + ",";
     json += "\"lastHttpCode\":" + String(lastHttpCode);
+    json += "}";
+    server.send(200, "application/json", json);
+  });
+
+  // Diagnostic: shows where the camera is and what it's doing.
+  server.on("/whoami", HTTP_GET, []() {
+    String json = "{";
+    json += "\"ip\":\"" + WiFi.localIP().toString() + "\",";
+    json += "\"ssid\":\"" + String(WiFi.SSID()) + "\",";
+    json += "\"hostname\":\"" + String(MDNS_HOSTNAME) + "\",";
+    json += "\"capturing\":" + String(capturing ? "true" : "false");
     json += "}";
     server.send(200, "application/json", json);
   });
@@ -286,7 +446,7 @@ void uploadFrame(camera_fb_t* fb) {
 
   http.addHeader("Content-Type", "application/octet-stream");
 
-  int httpCode = http.POST((const uint8_t*)fb->buf, fb->len);
+  int httpCode = http.POST(fb->buf, fb->len);
   lastHttpCode = httpCode;
 
   if (httpCode > 0) {

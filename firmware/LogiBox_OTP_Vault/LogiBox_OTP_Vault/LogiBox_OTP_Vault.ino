@@ -1,5 +1,5 @@
 /*
-  LogiBox - ESP32-S3 OTP Vault Verification (Multi-Vault)
+  LogiBox - ESP32 OTP Vault Verification (Multi-Vault)
   --------------------------------------------------------
   Reads a 6-digit OTP from a 4x4 keypad, displays status on an I2C LCD,
   and verifies it against the Vercel /api/device-verify-otp endpoint.
@@ -7,150 +7,395 @@
   Supports multiple vaults per device - user selects which vault to open
   from a menu, then enters OTP for that specific vault.
 
-  Board: ESP32-S3-WROOM DevKit
+  On a successful OTP the vault's solenoid lock (via a 4-channel relay
+  module) energizes to release the door. The lock stays released until the
+  reed switch reports the door was opened and closed again, or a failsafe
+  timeout forces it locked. Fail-secure: power loss or reset = locked.
+
+  While a delivery session is active, the keypad tells the ESP32-CAM
+  (LogiBox_ESP32CAM.ino) to start/stop capturing via a LAN HTTP call.
+  The captured frames are stored in the web app as delivery evidence.
+
+  NON-BLOCKING ARCHITECTURE:
+  All network work (camera commands, OTP verification) runs in a FreeRTOS
+  task pinned to core 0, fed through a request queue. The main loop never
+  blocks: the keypad, LCD, door and parcel monitoring stay responsive even
+  while HTTP/mDNS calls are in flight. OTP results come back through a
+  result queue and are applied on the main loop. UI flash messages are
+  timer-based instead of delay()-based.
+
+  Board: ESP32 Dev Module (38-pin DevKit, CP2102)
   Libraries required (install via Arduino IDE Library Manager):
     - Keypad (Mark Stanley)
     - LiquidCrystal I2C (Frank de Brabander)
     - ArduinoJson (Benoit Blanchon)
+    - WiFiManager (tablatronix)
 
-  HARDWARE STATUS: keypad + LCD only for now. Solenoid/relay wiring is
-  left as a TODO placeholder - search "SOLENOID" below when you add it.
+  WiFi credentials are configured once per device via WiFiManager:
+  on first boot (or when the saved network is gone) this keypad starts a
+  portal AP named "LogiBoxKeypad". Join it from a phone, open
+  http://192.168.4.1, and enter the WiFi credentials. They are stored in
+  NVS and survive re-flashes. The LCD shows the AP name during setup.
 
-  IMPORTANT: Fill in WIFI_SSID, WIFI_PASSWORD, and DEVICE_ID below
-  before uploading. FUNCTION_URL is already set to your deployed
-  Vercel endpoint.
-
-  NOTE ON SECRETS: don't commit this file with real WiFi credentials
-  filled in. Move WIFI_SSID/WIFI_PASSWORD into a separate secrets.h
-  that's in your .gitignore once you're past bench testing.
+  All tunables live in config.h. Types and enums live in types.h.
 */
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include <WiFiManager.h>
+#include <ESPmDNS.h>
 #include <ArduinoJson.h>
 #include <Keypad.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
-#include <string.h>  // For strcpy, strlen
-
-// ---------------- CONFIG: EDIT THESE ----------------
-//const char* WIFI_SSID     = "Converge_2.4GHz_zF2e";
-//const char* WIFI_PASSWORD = "t2dnEvwC";
-const char* WIFI_SSID     = "OPPO A94";
-const char* WIFI_PASSWORD = "password1";
-const char* DEVICE_ID     = "esp32-test-001"; // must match the device doc in Firestore
-
-const char* FUNCTION_URL  = "https://logibox-bit-deploy-3xzd.vercel.app/api/device-verify-otp";
+#include <string.h>
+#include <Preferences.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+#include "esp_task_wdt.h"
+#include "config.h"
+#include "types.h"
 
 // Allowed vault IDs for this device - MUST match the allowedVaultIds array
 // in the device's Firestore document. Used for local UX filtering only;
 // the server re-validates this.
 const char* ALLOWED_VAULTS[] = {"1", "2", "3"};
-const int NUM_VAULTS = 3;
-
-// Door Controller ESP32 IP - change to match your ESP32 #2 IP
-const char* DOOR_CONTROLLER_IP = "192.168.1.150";
-const int DOOR_CONTROLLER_PORT = 80;
-
-// ESP32-CAM IP - the camera starts/stops capturing via LAN HTTP
-// Must match the static IP in LogiBox_ESP32CAM.ino
-const char* CAMERA_IP = "192.168.1.151";
-const int CAMERA_PORT = 80;
-// -----------------------------------------------------
 
 // ---------------- LCD (I2C) ----------------
-// Common I2C LCD address is 0x27 or 0x3F - if the LCD shows nothing,
-// try changing 0x27 to 0x3F.
-LiquidCrystal_I2C lcd(0x27, 16, 2); // 16x2 LCD. Change to (0x27, 20, 4) if you have a 20x4.
+LiquidCrystal_I2C lcd(LCD_ADDR, LCD_COLS, LCD_ROWS);
 
 // ---------------- Keypad (4x4) ----------------
-const byte ROWS = 4;
-const byte COLS = 4;
-char keys[ROWS][COLS] = {
-  {'1','2','3','A'},
-  {'4','5','6','B'},
-  {'7','8','9','C'},
-  {'*','0','#','D'}
+char keys[KEYPAD_ROWS][KEYPAD_COLS] = {
+  {'1','4','7','*'},
+  {'2','5','8','0'},
+  {'3','6','9','#'},
+  {'A','B','C','D'}
 };
-byte rowPins[ROWS] = {4, 5, 6, 7};     // R1, R2, R3, R4
-byte colPins[COLS] = {15, 16, 17, 18}; // C1, C2, C3, C4
+byte rowPins[KEYPAD_ROWS] = {4, 5, 14, 13};
+byte colPins[KEYPAD_COLS] = {15, 16, 17, 18};
+Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, KEYPAD_ROWS, KEYPAD_COLS);
 
-Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
+// ---------------- Reed Switches (Vault Doors) ----------------
+#if ENABLE_REED_SWITCHES
+const byte REED_PINS[NUM_VAULTS] = {REED_PIN_V1, REED_PIN_V2, REED_PIN_V3};
+#endif
 
-// ---------------- State Machine ----------------
-enum ScreenState {
-  WELCOME,        // Initial screen, waiting for any key
-  SELECT_VAULT,  // User selects which vault to open
-  ENTER_OTP,     // User enters OTP for selected vault
-  VERIFYING,     // HTTP request in progress
-  RESULT,        // Show result of verification
-  LOCKOUT        // Rate limited, show wait time
-};
+// ---------------- IR Sensors (Parcel Detection) ----------------
+#if ENABLE_IR_SENSORS
+const byte IR_PINS[NUM_VAULTS] = {IR_PIN_V1, IR_PIN_V2, IR_PIN_V3};
+#endif
 
+// ---------------- Solenoid Locks (via relay module) ----------------
+// Relay energizes on the level that matches RELAY_ACTIVE_LOW in config.h.
+#if ENABLE_SOLENOID_LOCKS
+const byte RELAY_PINS[NUM_VAULTS] = {RELAY_PIN_V1, RELAY_PIN_V2, RELAY_PIN_V3};
+#if RELAY_ACTIVE_LOW
+const byte RELAY_ON_LEVEL  = LOW;
+const byte RELAY_OFF_LEVEL = HIGH;
+#else
+const byte RELAY_ON_LEVEL  = HIGH;
+const byte RELAY_OFF_LEVEL = LOW;
+#endif
+LockState locks[NUM_VAULTS] = {{false, false, 0}, {false, false, 0}, {false, false, 0}};
+#endif
+
+// ---------------- NVS Persistence ----------------
+Preferences nvs;
+
+// ---------------- State ----------------
 ScreenState currentState = WELCOME;
-ScreenState previousState = WELCOME;  // For returning after lockout
+ScreenState previousState = WELCOME;
 
-// Current vault selection (char array to avoid String memory issues)
 char selectedVault[2] = "";
-
-// OTP input (char array to avoid String memory issues)
-char otpInput[7] = "";  // 6 digits + null terminator
-const int OTP_LENGTH = 6;
+char otpInput[7] = "";
 
 // Timers
 unsigned long lastKeyTime = 0;
-const unsigned long KEY_DEBOUNCE_MS = 200;
-
-// Idle timeout - return to WELCOME after 30s of no input on RESULT screen
 unsigned long lastActivityTime = 0;
-const unsigned long IDLE_TIMEOUT_MS = 30000UL;
-
-// Result screen display duration before auto-return
-const unsigned long RESULT_DISPLAY_MS = 2000UL;
 unsigned long resultShownAt = 0;
+unsigned long verifyStartedAt = 0;
 
-// Local lockout (rate limiting mirror)
+// Local lockout
 int localFailCount = 0;
 unsigned long lockoutUntilMs = 0;
-const int LOCAL_FAIL_THRESHOLD = 5;
-const unsigned long LOCAL_LOCKOUT_MS = 15UL * 60UL * 1000UL; // 15 min
-
-// WiFi reconnect timing
-const unsigned long WIFI_RECONNECT_TIMEOUT_MS = 8000;
 
 // Result tracking for display
-String lastResultMessage = "";
+char lastResultMessage[33] = "";
 bool lastResultSuccess = false;
 char lastResultVault[2] = "";
+
+// Sensor state
+DoorState doors[NUM_VAULTS] = {{false, false, 0}, {false, false, 0}, {false, false, 0}};
+ParcelState parcels[NUM_VAULTS] = {{false, false, 0}, {false, false, 0}, {false, false, 0}};
+
+// ---------------- Network Task (non-blocking core) ----------------
+QueueHandle_t netReqQueue;
+QueueHandle_t netResultQueue;
+TaskHandle_t networkTaskHandle = NULL;
+
+// Camera IP cache (used only inside the network task)
+IPAddress cachedCamIP;
+unsigned long camIpCachedAt = 0;
+bool camIpValid = false;
+
+// Non-blocking flash messages
+bool flashActive = false;
+unsigned long flashUntil = 0;
+ScreenState flashReturnTo = WELCOME;
+
+// ---------------- Parallax Scrolling ----------------
+// Supports two independent scroll lines (line 0 and line 1)
+struct ScrollLine {
+  char text[33];            // Full message to scroll
+  int textLen;              // Length of text
+  int scrollPos;            // Current scroll position
+  unsigned long lastScroll; // Last scroll timestamp
+  bool active;              // Whether this line is scrolling
+};
+
+ScrollLine scrollLines[2] = {
+  {"", 0, 0, 0, false},
+  {"", 0, 0, 0, false}
+};
+
+// ---------------- Boot Self-Test ----------------
+
+void showBootSplash() {
+  lcdClear();
+  lcd.setCursor(0, 0);
+  lcd.print("  LogiBox");
+  lcd.setCursor(0, 1);
+  lcd.print(" Smart Vault v1.0");
+  delay(BOOT_SPLASH_MS);
+}
+
+bool runBootSelfTest() {
+  bool allOk = true;
+
+  lcdClear();
+  lcd.setCursor(0, 0);
+  lcd.print("Self-test...");
+
+  // Test reed switches (if enabled)
+#if ENABLE_REED_SWITCHES
+  for (int i = 0; i < NUM_VAULTS; i++) {
+    bool raw = (digitalRead(REED_PINS[i]) == LOW);
+    doors[i].pending = doors[i].closed = raw;
+    doors[i].pendingSince = millis();
+    Serial.print("  Vault ");
+    Serial.print(i + 1);
+    Serial.print(" door: ");
+    Serial.println(raw ? "CLOSED" : "OPENED");
+  }
+#endif
+
+  // Test IR sensors (if enabled)
+#if ENABLE_IR_SENSORS
+  for (int i = 0; i < NUM_VAULTS; i++) {
+    bool raw = (digitalRead(IR_PINS[i]) == LOW);
+    parcels[i].pending = parcels[i].present = raw;
+    parcels[i].pendingSince = millis();
+    Serial.print("  Vault ");
+    Serial.print(i + 1);
+    Serial.print(" parcel: ");
+    Serial.println(raw ? "PRESENT" : "EMPTY");
+  }
+#endif
+
+  // Solenoid locks: report idle state only - never actuate at boot.
+#if ENABLE_SOLENOID_LOCKS
+  for (int i = 0; i < NUM_VAULTS; i++) {
+    Serial.print("  Vault ");
+    Serial.print(i + 1);
+    Serial.println(" lock: LOCKED");
+  }
+#endif
+
+  // Test keypad responsiveness: show message, wait briefly for any key
+  lcdClear();
+  lcd.setCursor(0, 0);
+  lcd.print("Press any key");
+  lcd.setCursor(0, 1);
+  lcd.print("to continue...");
+
+  unsigned long waitStart = millis();
+  bool keyReceived = false;
+  while (millis() - waitStart < 5000) {
+    char k = keypad.getKey();
+    if (k) {
+      keyReceived = true;
+      break;
+    }
+    delay(10);
+  }
+
+  if (keyReceived) {
+    Serial.println("Keypad: OK");
+  } else {
+    Serial.println("Keypad: no press (still OK)");
+  }
+
+  // Increment boot count in NVS
+  nvs.begin(NVS_NAMESPACE, false);
+  uint32_t bootCount = nvs.getUInt(NVS_KEY_BOOT_COUNT, 0);
+  bootCount++;
+  nvs.putUInt(NVS_KEY_BOOT_COUNT, bootCount);
+  nvs.end();
+
+  Serial.print("Boot #");
+  Serial.println(bootCount);
+
+  lcdClear();
+  lcd.setCursor(0, 0);
+  if (allOk) {
+    lcd.print("All OK - Boot #");
+    lcd.print(bootCount);
+  } else {
+    lcd.print("Check sensors");
+    allOk = false;
+  }
+  delay(1000);
+
+  return allOk;
+}
+
+// ---------------- NVS Lockout Persistence ----------------
+
+void saveLockoutToNVS() {
+  nvs.begin(NVS_NAMESPACE, false);
+  nvs.putULong(NVS_KEY_LOCKOUT_UNTIL, lockoutUntilMs);
+  nvs.putUChar(NVS_KEY_FAIL_COUNT, (uint8_t)localFailCount);
+  nvs.end();
+}
+
+void loadLockoutFromNVS() {
+  nvs.begin(NVS_NAMESPACE, true);
+  lockoutUntilMs = nvs.getULong(NVS_KEY_LOCKOUT_UNTIL, 0);
+  localFailCount = nvs.getInt(NVS_KEY_FAIL_COUNT, 0);
+  nvs.end();
+
+  // If the lockout period has already expired, clear it
+  if (lockoutUntilMs > 0 && millis() >= lockoutUntilMs) {
+    lockoutUntilMs = 0;
+    localFailCount = 0;
+    saveLockoutToNVS();
+    Serial.println("NVS: expired lockout cleared");
+  } else if (lockoutUntilMs > 0) {
+    unsigned long remainingMs = lockoutUntilMs - millis();
+    unsigned long remainingMin = (remainingMs / 60000UL) + 1;
+    Serial.print("NVS: restored lockout (");
+    Serial.print(remainingMin);
+    Serial.println(" min remaining)");
+  }
+}
+
+// ---------------- Setup ----------------
 
 void setup() {
   Serial.begin(115200);
   Serial.println("=== LogiBox Starting ===");
-  delay(500);  // Give time for serial to init
 
+  // Relays FIRST - drive every channel to the locked level before anything
+  // else runs so no solenoid can fire during boot. Fail-secure default.
+#if ENABLE_SOLENOID_LOCKS
+  Serial.println("Initializing solenoid locks...");
+  initRelays();
+#endif
+
+  delay(500);
+
+  // Initialize LCD first (needed for boot splash and self-test)
   Serial.println("Initializing LCD...");
+  Wire.begin(LCD_SDA, LCD_SCL);
   lcd.init();
   lcd.backlight();
+
+  // Boot splash
+  showBootSplash();
+
+  // Reed switches (if enabled)
+#if ENABLE_REED_SWITCHES
+  Serial.println("Initializing reed switches...");
+  for (int i = 0; i < NUM_VAULTS; i++) {
+    pinMode(REED_PINS[i], INPUT_PULLUP);
+  }
+#endif
+
+  // IR sensors (if enabled)
+#if ENABLE_IR_SENSORS
+  Serial.println("Initializing IR sensors...");
+  for (int i = 0; i < NUM_VAULTS; i++) {
+    pinMode(IR_PINS[i], INPUT);
+  }
+#endif
+
+  // Boot self-test
+  runBootSelfTest();
+
+  // WiFi
+  lcdClear();
   lcd.setCursor(0, 0);
   lcd.print("Connecting WiFi");
 
   Serial.println("Connecting to WiFi...");
   connectWiFi();
 
-  // Small delay to let LCD stabilize
   delay(100);
   lcdClear();
   lcd.home();
+
+  // FreeRTOS queues and network task
+  netReqQueue = xQueueCreate(NET_REQ_QUEUE_SIZE, sizeof(NetMsg));
+  netResultQueue = xQueueCreate(NET_RES_QUEUE_SIZE, sizeof(NetMsg));
+  xTaskCreatePinnedToCore(networkTask, "network", NET_TASK_STACK_SIZE, NULL, 1, &networkTaskHandle, 0);
+
+  // Restore lockout state from NVS
+  loadLockoutFromNVS();
+
+  // Enable hardware watchdog on the main loop task
+#if WDT_TIMEOUT_SEC > 0
+  esp_task_wdt_config_t wdt_config = {
+    .timeout_ms = WDT_TIMEOUT_SEC * 1000,
+    .idle_core_mask = 0,
+    .trigger_panic = true,
+  };
+  esp_task_wdt_init(&wdt_config);
+  esp_task_wdt_add(NULL);
+  Serial.print("Watchdog enabled (");
+  Serial.print(WDT_TIMEOUT_SEC);
+  Serial.println("s timeout)");
+#endif
 
   lastActivityTime = millis();
   showScreen(WELCOME);
 }
 
+// ---------------- Loop ----------------
+
 void loop() {
+#if WDT_TIMEOUT_SEC > 0
+  esp_task_wdt_reset();
+#endif
+
+  checkNetworkResults();
+  checkFlashMessage();
+  updateScrolling();
+#if ENABLE_SOLENOID_LOCKS
+  checkLockStates();
+#endif
+
   char key = keypad.getKey();
   if (!key) {
     checkIdleTimeout();
+#if ENABLE_REED_SWITCHES
+    checkDoorStates();
+#endif
+#if ENABLE_IR_SENSORS
+    checkParcelStates();
+#endif
+    checkVerifyTimeout();
     return;
   }
 
@@ -158,6 +403,8 @@ void loop() {
   if (now - lastKeyTime < KEY_DEBOUNCE_MS) return;
   lastKeyTime = now;
   lastActivityTime = now;
+
+  flashActive = false;
 
   Serial.print("Key pressed: ");
   Serial.println(key);
@@ -167,14 +414,72 @@ void loop() {
   handleKeyPress(key);
 }
 
+// ---------------- Network Task Implementation ----------------
+
+void networkTask(void* param) {
+  NetMsg msg;
+  for (;;) {
+    if (xQueueReceive(netReqQueue, &msg, pdMS_TO_TICKS(50)) == pdPASS) {
+      switch (msg.op) {
+        case OP_START_CAMERA:
+          sendCameraCommandInternal("start", msg.reqVault);
+          break;
+        case OP_STOP_CAMERA:
+          sendCameraCommandInternal("stop", "");
+          break;
+        case OP_VERIFY_OTP:
+          msg.resultCode = 0;
+          msg.resultBody[0] = '\0';
+          submitOtpInternal(msg.reqOtp, msg.reqVault, &msg);
+          xQueueSend(netResultQueue, &msg, 0);
+          break;
+        default:
+          break;
+      }
+    }
+  }
+}
+
+// Main loop side: consumes completed OTP verifications.
+void checkNetworkResults() {
+  NetMsg msg;
+  while (xQueueReceive(netResultQueue, &msg, 0) == pdPASS) {
+    handleOtpResult(msg.resultCode, msg.resultBody);
+  }
+}
+
+void handleOtpResult(int code, const char* body) {
+  if (code == -1) {
+    lastResultSuccess = false;
+    strncpy(lastResultMessage, "No WiFi!", sizeof(lastResultMessage) - 1);
+    strcpy(lastResultVault, selectedVault);
+    showScreen(RESULT);
+    return;
+  }
+  if (code == -2) {
+    lastResultSuccess = false;
+    strncpy(lastResultMessage, "Connect failed", sizeof(lastResultMessage) - 1);
+    strcpy(lastResultVault, selectedVault);
+    showScreen(RESULT);
+    return;
+  }
+  handleResponse(code, body);
+}
+
+void checkVerifyTimeout() {
+  if (currentState == VERIFYING && millis() - verifyStartedAt >= VERIFY_TIMEOUT_MS) {
+    lastResultSuccess = false;
+    strncpy(lastResultMessage, "Network error", sizeof(lastResultMessage) - 1);
+    strcpy(lastResultVault, selectedVault);
+    showScreen(RESULT);
+  }
+}
+
 // ---------------- State Machine Handler ----------------
 
 void handleKeyPress(char key) {
   switch (currentState) {
     case WELCOME:
-      // Any key goes to vault selection
-      // A session is starting - tell the ESP32-CAM to begin capturing
-      sendCameraCommand("start");
       showScreen(SELECT_VAULT);
       break;
 
@@ -187,16 +492,22 @@ void handleKeyPress(char key) {
       break;
 
     case VERIFYING:
-      // Ignore all keys during verification
       break;
 
     case RESULT:
-      // Any key goes back to SELECT_VAULT (faster than waiting for timeout)
       showScreen(SELECT_VAULT);
       break;
 
     case LOCKOUT:
-      // Ignore keys during lockout - will return after showing lockout
+      break;
+
+    case SHOW_STATUS:
+      showScreen(WELCOME);
+      break;
+
+    case DOOR_UNLOCKED:
+      // Keys are ignored while the door is released; re-locking is driven
+      // by checkLockStates() (door close or failsafe timeout).
       break;
   }
 }
@@ -204,42 +515,32 @@ void handleKeyPress(char key) {
 // SELECT_VAULT screen keys
 void handleSelectVaultKey(char key) {
   if (key == '*') {
-    // Go back to welcome - stop the camera capture
-    sendCameraCommand("stop");
+    requestCameraCommand(OP_STOP_CAMERA, "");
     showScreen(WELCOME);
   } else if (isDigit(key)) {
-    // Check if it's an allowed vault - use char array
     char vault[2] = {key, '\0'};
     if (isVaultAllowed(vault)) {
       strcpy(selectedVault, vault);
-      // The vault is known now - label the camera session with it
-      sendCameraCommand("start", selectedVault);
-      otpInput[0] = '\0';  // Clear otpInput
+      requestCameraCommand(OP_START_CAMERA, selectedVault);
+      otpInput[0] = '\0';
       showScreen(ENTER_OTP);
     } else {
-      // Invalid vault - flash message
       showInvalidVaultMessage();
-      // Redraw SELECT_VAULT screen
-      showSelectVaultScreen();
     }
   }
-  // A, B, C, D keys are ignored in vault selection
 }
 
 // ENTER_OTP screen keys
 void handleEnterOtpKey(char key) {
   if (key == '*') {
-    // Back to vault selection
     showScreen(SELECT_VAULT);
   } else if (key == 'D') {
-    // Backspace - remove last digit if any
     int len = strlen(otpInput);
     if (len > 0) {
       otpInput[len - 1] = '\0';
       updateOtpDisplay();
     }
   } else if (key == '#') {
-    // Submit
     if (isLockedOutLocally()) {
       showScreen(LOCKOUT);
       return;
@@ -248,7 +549,6 @@ void handleEnterOtpKey(char key) {
       submitOtp(otpInput);
     } else {
       showNeed6DigitsMessage();
-      showEnterOtpScreen();
     }
   } else if (isDigit(key) && strlen(otpInput) < OTP_LENGTH) {
     int len = strlen(otpInput);
@@ -256,21 +556,36 @@ void handleEnterOtpKey(char key) {
     otpInput[len + 1] = '\0';
     updateOtpDisplay();
   }
-  // A, B, C keys unused
 }
 
 // ---------------- Screen Display Functions ----------------
 
-// Helper function to properly clear LCD - prevents ghosting/blurring
 void lcdClear() {
-  delay(30);  // Wait before clearing
+  delay(5);
   lcd.clear();
-  delay(50);  // Wait after clearing for LCD to process
-  lcd.home();
-  delay(30);  // Extra wait
+  // Stop all scrolling when clearing
+  scrollLines[0].active = false;
+  scrollLines[1].active = false;
+}
+
+void flashLine(const char* line, unsigned long ms, ScreenState returnTo) {
+  lcdClear();
+  lcd.setCursor(0, 0);
+  lcd.print(line);
+  flashUntil = millis() + ms;
+  flashActive = true;
+  flashReturnTo = returnTo;
+}
+
+void checkFlashMessage() {
+  if (flashActive && millis() >= flashUntil) {
+    flashActive = false;
+    showScreen(flashReturnTo);
+  }
 }
 
 void showScreen(ScreenState state) {
+  flashActive = false;
   currentState = state;
 
   switch (state) {
@@ -293,13 +608,91 @@ void showScreen(ScreenState state) {
     case LOCKOUT:
       showLockoutScreen();
       break;
+    case SHOW_STATUS:
+      break;
+    case DOOR_UNLOCKED:
+      showDoorUnlockedScreen();
+      break;
+  }
+}
+
+// ---------------- Parallax Scrolling Implementation ----------------
+
+// Start scrolling on a specific line (0 or 1)
+void startScrolling(int line, const char* text) {
+  if (line < 0 || line > 1) return;
+  
+  ScrollLine* sl = &scrollLines[line];
+  strncpy(sl->text, text, sizeof(sl->text) - 1);
+  sl->text[sizeof(sl->text) - 1] = '\0';
+  sl->textLen = strlen(sl->text);
+  sl->scrollPos = 0;
+  sl->lastScroll = millis();
+  
+  // Only activate scrolling if text is longer than LCD_COLS
+  if (sl->textLen > LCD_COLS) {
+    sl->active = true;
+    // Show initial window (first LCD_COLS characters)
+    lcd.setCursor(0, line);
+    lcd.print("                ");
+    lcd.setCursor(0, line);
+    for (int i = 0; i < LCD_COLS && i < sl->textLen; i++) {
+      lcd.print(sl->text[i]);
+    }
+  } else {
+    sl->active = false;
+    // Text fits, just display it
+    lcd.setCursor(0, line);
+    lcd.print("                ");
+    lcd.setCursor(0, line);
+    lcd.print(sl->text);
+  }
+}
+
+// Stop scrolling on a specific line
+void stopScrolling(int line) {
+  if (line < 0 || line > 1) return;
+  scrollLines[line].active = false;
+}
+
+// Update scrolling - call this in loop() frequently
+void updateScrolling() {
+  unsigned long now = millis();
+  
+  for (int line = 0; line < 2; line++) {
+    ScrollLine* sl = &scrollLines[line];
+    if (!sl->active) continue;
+    
+    // Check if it's time to scroll
+    if (now - sl->lastScroll < SCROLL_SPEED_MS) continue;
+    
+    sl->lastScroll = now;
+    sl->scrollPos++;
+    
+    // Pause at the end before restarting
+    if (sl->scrollPos >= sl->textLen - LCD_COLS) {
+      sl->scrollPos = 0;
+      sl->lastScroll = now + SCROLL_PAUSE_MS; // Extra pause at restart
+    }
+    
+    // Update display
+    lcd.setCursor(0, line);
+    lcd.print("                "); // Clear line
+    lcd.setCursor(0, line);
+    
+    for (int i = 0; i < LCD_COLS; i++) {
+      int srcIdx = sl->scrollPos + i;
+      if (srcIdx < sl->textLen) {
+        lcd.print(sl->text[srcIdx]);
+      } else {
+        lcd.print(' ');
+      }
+    }
   }
 }
 
 void showWelcomeScreen() {
-  lcd.init();
-  lcd.backlight();
-  lcd.clear();
+  lcdClear();
   lcd.setCursor(0, 0);
   lcd.print("LogiBox Vault");
   lcd.setCursor(0, 1);
@@ -311,7 +704,6 @@ void showSelectVaultScreen() {
   lcd.setCursor(0, 0);
   lcd.print("Select Vault:");
   lcd.setCursor(0, 1);
-  // Print vaults directly without String concatenation
   for (int i = 0; i < NUM_VAULTS; i++) {
     lcd.print(ALLOWED_VAULTS[i]);
     if (i < NUM_VAULTS - 1) {
@@ -322,11 +714,7 @@ void showSelectVaultScreen() {
 }
 
 void showInvalidVaultMessage() {
-  lcd.setCursor(0, 1);
-  lcd.print("                "); // Clear line first
-  lcd.setCursor(0, 1);
-  lcd.print("Invalid vault   ");
-  delay(1000);
+  flashLine("Invalid vault", 800, SELECT_VAULT);
 }
 
 void showEnterOtpScreen() {
@@ -341,9 +729,8 @@ void showEnterOtpScreen() {
 
 void updateOtpDisplay() {
   lcd.setCursor(0, 1);
-  lcd.print("                "); // clear line
+  lcd.print("                ");
   lcd.setCursor(0, 1);
-  // Mask digits as they're entered
   int len = strlen(otpInput);
   for (int i = 0; i < len; i++) {
     lcd.print("*");
@@ -351,9 +738,7 @@ void updateOtpDisplay() {
 }
 
 void showNeed6DigitsMessage() {
-  lcd.setCursor(0, 1);
-  lcd.print("Need 6 digits   ");
-  delay(1200);
+  flashLine("Need 6 digits", 1000, ENTER_OTP);
 }
 
 void showVerifyingScreen() {
@@ -374,49 +759,235 @@ void showResultScreen() {
     lcd.setCursor(0, 1);
     lcd.print("Vault ");
     lcd.print(lastResultVault);
-    lcd.print(" unlocked");
+    lcd.print(" - OK");
   } else {
-    // Check specific error types for appropriate message
-    if (lastResultMessage.indexOf("not authorized") >= 0) {
-      lcd.print("Not authorized");
-      lcd.setCursor(0, 1);
-      lcd.print("for Vault ");
-      lcd.print(lastResultVault);
-    } else if (lastResultMessage.indexOf("Invalid OTP") >= 0) {
-      lcd.print("ACCESS DENIED");
-      lcd.setCursor(0, 1);
-      lcd.print("Vault ");
-      lcd.print(lastResultVault);
-      lcd.print(" - bad OTP");
-    } else if (lastResultMessage.indexOf("Too many") >= 0) {
-      lcd.print("Vault ");
-      lcd.print(lastResultVault);
-      lcd.print(" - ");
-      lcd.setCursor(0, 1);
-      lcd.print(lastResultMessage.substring(0, 16));
+    char line0[17] = "";
+    char line1[17] = "";
+    
+    if (strstr(lastResultMessage, "not authorized") != NULL) {
+      strcpy(line0, "Not authorized");
+      snprintf(line1, sizeof(line1), "for Vault %s", lastResultVault);
+    } else if (strstr(lastResultMessage, "Invalid OTP") != NULL) {
+      strcpy(line0, "ACCESS DENIED");
+      snprintf(line1, sizeof(line1), "Vault %s - bad OTP", lastResultVault);
+    } else if (strstr(lastResultMessage, "Too many") != NULL) {
+      snprintf(line0, sizeof(line0), "Vault %s -", lastResultVault);
+      strncpy(line1, lastResultMessage, sizeof(line1) - 1);
     } else {
-      // Generic error - show on line 1
-      lcd.print("Vault ");
-      lcd.print(lastResultVault);
-      lcd.setCursor(0, 1);
-      lcd.print(lastResultMessage.substring(0, 16));
+      snprintf(line0, sizeof(line0), "Vault %s", lastResultVault);
+      strncpy(line1, lastResultMessage, sizeof(line1) - 1);
+    }
+    
+    // Use scrolling for long messages
+    startScrolling(0, line0);
+    startScrolling(1, line1);
+  }
+}
+
+// ---------------- Door State (Reed Switches) ----------------
+
+#if ENABLE_REED_SWITCHES
+void checkDoorStates() {
+  for (int i = 0; i < NUM_VAULTS; i++) {
+    bool raw = (digitalRead(REED_PINS[i]) == LOW);
+    if (raw != doors[i].pending) {
+      doors[i].pending = raw;
+      doors[i].pendingSince = millis();
+    } else if (millis() - doors[i].pendingSince >= DOOR_DEBOUNCE_MS) {
+      if (doors[i].closed != raw) {
+        doors[i].closed = raw;
+        onDoorChange(i);
+      }
     }
   }
 }
+
+void onDoorChange(int vaultIndex) {
+  const char* state = doors[vaultIndex].closed ? "CLOSED" : "OPENED";
+  Serial.print("Vault ");
+  Serial.print(vaultIndex + 1);
+  Serial.print(" door ");
+  Serial.println(state);
+}
+#endif
+
+// ---------------- Parcel State (IR Sensors) ----------------
+
+#if ENABLE_IR_SENSORS
+void checkParcelStates() {
+  for (int i = 0; i < NUM_VAULTS; i++) {
+    bool raw = (digitalRead(IR_PINS[i]) == LOW);
+    if (raw != parcels[i].pending) {
+      parcels[i].pending = raw;
+      parcels[i].pendingSince = millis();
+    } else if (millis() - parcels[i].pendingSince >= PARCEL_DEBOUNCE_MS) {
+      if (parcels[i].present != raw) {
+        parcels[i].present = raw;
+        onParcelChange(i);
+      }
+    }
+  }
+}
+
+void onParcelChange(int vaultIndex) {
+  const char* state = parcels[vaultIndex].present ? "PLACED" : "REMOVED";
+  Serial.print("Vault ");
+  Serial.print(vaultIndex + 1);
+  Serial.print(" parcel ");
+  Serial.println(state);
+}
+#endif
+
+// ---------------- Solenoid Lock Control ----------------
+
+#if ENABLE_SOLENOID_LOCKS
+
+void initRelays() {
+  // Write the inactive level BEFORE pinMode so the output register is
+  // preloaded the instant the pin becomes an output (no glitch pulse).
+  for (int i = 0; i < NUM_VAULTS; i++) {
+    digitalWrite(RELAY_PINS[i], RELAY_OFF_LEVEL);
+    pinMode(RELAY_PINS[i], OUTPUT);
+    digitalWrite(RELAY_PINS[i], RELAY_OFF_LEVEL);
+  }
+}
+
+void unlockVault(int vaultIndex) {
+  if (vaultIndex < 0 || vaultIndex >= NUM_VAULTS) return;
+  locks[vaultIndex].unlocked = true;
+  locks[vaultIndex].doorOpenedDuringUnlock = false;
+  locks[vaultIndex].unlockedAt = millis();
+  digitalWrite(RELAY_PINS[vaultIndex], RELAY_ON_LEVEL);
+  Serial.print("Vault ");
+  Serial.print(vaultIndex + 1);
+  Serial.println(" UNLOCKED");
+}
+
+void relockVault(int vaultIndex) {
+  if (vaultIndex < 0 || vaultIndex >= NUM_VAULTS) return;
+  locks[vaultIndex].unlocked = false;
+  digitalWrite(RELAY_PINS[vaultIndex], RELAY_OFF_LEVEL);
+  Serial.print("Vault ");
+  Serial.print(vaultIndex + 1);
+  Serial.println(" RELOCKED");
+}
+
+int vaultIndexFromId(const char* vaultId) {
+  for (int i = 0; i < NUM_VAULTS; i++) {
+    if (strcmp(vaultId, ALLOWED_VAULTS[i]) == 0) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+int firstUnlockedVaultIndex() {
+  for (int i = 0; i < NUM_VAULTS; i++) {
+    if (locks[i].unlocked) return i;
+  }
+  return -1;
+}
+
+// Re-lock policy: after a successful OTP the solenoid releases and waits
+// for the user to pull the door open (reed switch); once the door closes
+// again the lock re-engages automatically. The failsafe timeout forces a
+// re-lock even if the door never moves or is left open. Without reed
+// switches there is no door feedback, so a plain timed unlock is used.
+void checkLockStates() {
+  for (int i = 0; i < NUM_VAULTS; i++) {
+    if (!locks[i].unlocked) continue;
+
+    unsigned long elapsed = millis() - locks[i].unlockedAt;
+    bool timedOut = elapsed >= UNLOCK_MAX_TIMEOUT_MS;
+
+#if ENABLE_REED_SWITCHES
+    bool doorOpen = !doors[i].closed;
+
+    if (!locks[i].doorOpenedDuringUnlock && doorOpen) {
+      locks[i].doorOpenedDuringUnlock = true;
+      updateDoorUnlockedPrompt(i);
+      continue;
+    }
+
+    if (!timedOut && (!locks[i].doorOpenedDuringUnlock || doorOpen)) {
+      continue;
+    }
+
+    relockVault(i);
+#else
+    if (!timedOut && elapsed < UNLOCK_FALLBACK_MS) {
+      continue;
+    }
+    relockVault(i);
+#endif
+
+    if (currentState == DOOR_UNLOCKED) {
+      lastActivityTime = millis();
+      if (timedOut) {
+        flashLine("Auto-locked", 1500, SELECT_VAULT);
+      } else {
+        showScreen(SELECT_VAULT);
+      }
+    }
+  }
+}
+
+void showDoorUnlockedScreen() {
+  lcdClear();
+  lcd.setCursor(0, 0);
+  lcd.print("Vault ");
+  lcd.print(selectedVault);
+  lcd.print(" unlocked");
+
+  lcd.setCursor(0, 1);
+#if ENABLE_REED_SWITCHES
+  int idx = vaultIndexFromId(selectedVault);
+  if (idx >= 0 && !doors[idx].closed) {
+    lcd.print("Close door now");
+  } else {
+    lcd.print("Pull door open");
+  }
+#else
+  lcd.print("Close door soon");
+#endif
+}
+
+// Swap the hint on the unlocked screen once the user has pulled the door open.
+void updateDoorUnlockedPrompt(int vaultIndex) {
+  if (currentState != DOOR_UNLOCKED) return;
+  if (vaultIndexFromId(selectedVault) != vaultIndex) return;
+  lcd.setCursor(0, 1);
+  lcd.print("                ");
+  lcd.setCursor(0, 1);
+  lcd.print("Close door now");
+}
+
+#endif // ENABLE_SOLENOID_LOCKS
 
 // ---------------- Idle Timeout ----------------
 
 void checkIdleTimeout() {
   if (currentState == RESULT) {
     if (millis() - resultShownAt >= RESULT_DISPLAY_MS) {
-      // Auto-return to SELECT_VAULT after result display
+#if ENABLE_SOLENOID_LOCKS
+      // A granted OTP with a vault still released hands over to the
+      // unlocked screen instead of bouncing back to vault selection.
+      if (lastResultSuccess && firstUnlockedVaultIndex() >= 0) {
+        showScreen(DOOR_UNLOCKED);
+      } else {
+        showScreen(SELECT_VAULT);
+      }
+#else
       showScreen(SELECT_VAULT);
+#endif
     }
-  } else if (currentState != LOCKOUT && currentState != VERIFYING) {
-    // Check for return to WELCOME after idle
+  } else if (currentState != LOCKOUT && currentState != VERIFYING &&
+             currentState != DOOR_UNLOCKED) {
     if (millis() - lastActivityTime >= IDLE_TIMEOUT_MS) {
-      // Session timed out - stop the camera capture
-      sendCameraCommand("stop");
+      lastActivityTime = millis();
+      if (currentState != WELCOME) {
+        requestCameraCommand(OP_STOP_CAMERA, "");
+      }
       showScreen(WELCOME);
     }
   }
@@ -430,19 +1001,19 @@ bool isLockedOutLocally() {
 
 void showLockoutScreen() {
   unsigned long remainingMs = lockoutUntilMs - millis();
-  unsigned long remainingMin = (remainingMs / 60000UL) + 1; // round up
+  unsigned long remainingMin = (remainingMs / 60000UL) + 1;
 
   lcdClear();
   lcd.setCursor(0, 0);
   lcd.print("Locked out");
-  lcd.setCursor(0, 1);
-  lcd.print("Wait ~");
-  lcd.print(remainingMin);
-  lcd.print(" min");
-  delay(1500);
-
-  // After showing lockout, return to SELECT_VAULT
-  showScreen(SELECT_VAULT);
+  
+  char line1[17];
+  snprintf(line1, sizeof(line1), "Wait ~%lu min", remainingMin);
+  startScrolling(1, line1);
+  
+  flashUntil = millis() + 1500;
+  flashActive = true;
+  flashReturnTo = SELECT_VAULT;
 }
 
 void registerLocalFailure() {
@@ -450,18 +1021,20 @@ void registerLocalFailure() {
   if (localFailCount >= LOCAL_FAIL_THRESHOLD) {
     lockoutUntilMs = millis() + LOCAL_LOCKOUT_MS;
   }
+  saveLockoutToNVS();
 }
 
 void clearLocalFailures() {
   localFailCount = 0;
   lockoutUntilMs = 0;
+  saveLockoutToNVS();
 }
 
 // ---------------- Helper Functions ----------------
 
-bool isVaultAllowed(const String& vaultId) {
+bool isVaultAllowed(const char* vaultId) {
   for (int i = 0; i < NUM_VAULTS; i++) {
-    if (vaultId.equals(ALLOWED_VAULTS[i])) {
+    if (strcmp(vaultId, ALLOWED_VAULTS[i]) == 0) {
       return true;
     }
   }
@@ -476,6 +1049,8 @@ const char* stateToString(ScreenState state) {
     case VERIFYING: return "VERIFYING";
     case RESULT: return "RESULT";
     case LOCKOUT: return "LOCKOUT";
+    case SHOW_STATUS: return "SHOW_STATUS";
+    case DOOR_UNLOCKED: return "DOOR_UNLOCKED";
     default: return "UNKNOWN";
   }
 }
@@ -484,38 +1059,52 @@ const char* stateToString(ScreenState state) {
 
 void connectWiFi() {
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
-  }
+  WiFiManager wm;
+  wm.setConfigPortalTimeout(180);
 
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nWiFi connected. IP: " + WiFi.localIP().toString());
+  wm.setAPCallback([](WiFiManager* wm) {
     lcdClear();
     lcd.setCursor(0, 0);
-    lcd.print("WiFi Connected");
-    delay(1000);
-  } else {
+    lcd.print("Join WiFi:");
+    lcd.setCursor(0, 1);
+    lcd.print("LogiBoxKeypad");
+    Serial.println("\n=== WIFI SETUP REQUIRED ===");
+    Serial.println("Join the 'LogiBoxKeypad' hotspot from your phone,");
+    Serial.println("open http://192.168.4.1 and enter your WiFi credentials.");
+  });
+
+  if (!wm.autoConnect("LogiBoxKeypad")) {
     Serial.println("\nWiFi FAILED to connect.");
     lcdClear();
     lcd.setCursor(0, 0);
     lcd.print("WiFi FAILED");
     lcd.setCursor(0, 1);
-    lcd.print("Check credentials");
+    lcd.print("Retrying setup...");
     delay(3000);
+    return;
   }
+
+  Serial.print("\nWiFi connected. IP: ");
+  Serial.println(WiFi.localIP().toString());
+  MDNS.begin("logiboxkeypad");
+  lcdClear();
+  lcd.setCursor(0, 0);
+  lcd.print("WiFi Connected");
 }
 
 bool ensureWiFiConnected() {
   if (WiFi.status() == WL_CONNECTED) return true;
 
-  lcdClear();
-  lcd.setCursor(0, 0);
-  lcd.print("Reconnecting...");
+  // Show feedback on LCD
+  if (currentState != VERIFYING && currentState != RESULT) {
+    lcdClear();
+    lcd.setCursor(0, 0);
+    lcd.print("WiFi lost!");
+    lcd.setCursor(0, 1);
+    lcd.print("Reconnecting...");
+  }
+  Serial.println("WiFi disconnected, reconnecting...");
 
   WiFi.reconnect();
   unsigned long start = millis();
@@ -523,31 +1112,54 @@ bool ensureWiFiConnected() {
     delay(200);
   }
 
-  return WiFi.status() == WL_CONNECTED;
+  bool connected = WiFi.status() == WL_CONNECTED;
+  if (connected) {
+    Serial.println("WiFi reconnected");
+  } else {
+    Serial.println("WiFi reconnect failed");
+  }
+
+  return connected;
 }
 
 // ---------------- Camera Control ----------------
 
-// Sends a LAN HTTP command to the ESP32-CAM to start/stop capturing.
-// Fires-and-forgets: failures are logged but never block the keypad flow.
-// vaultId (optional) labels the camera session with the vault being opened.
-void sendCameraCommand(const char* command) {
-  sendCameraCommand(command, "");
+void requestCameraCommand(NetworkOp op, const char* vaultId) {
+  NetMsg msg;
+  msg.op = op;
+  msg.reqVault[0] = (vaultId != NULL) ? vaultId[0] : '\0';
+  msg.reqVault[1] = '\0';
+  msg.reqOtp[0] = '\0';
+  msg.resultCode = 0;
+  msg.resultBody[0] = '\0';
+  if (xQueueSend(netReqQueue, &msg, 0) != pdPASS) {
+    Serial.println("Network queue full - camera command dropped");
+  }
 }
 
-void sendCameraCommand(const char* command, const char* vaultId) {
+void sendCameraCommandInternal(const char* command, const char* vaultId) {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("Camera command skipped: no WiFi");
+    return;
+  }
+
+  IPAddress camIP = resolveCameraIPInternal();
+  if (camIP == IPAddress()) {
+    Serial.println("Camera command skipped: ESP32-CAM not found on this network.");
+    Serial.println("Is the camera on the SAME network as the keypad?");
     return;
   }
 
   HTTPClient http;
   http.setTimeout(5000);
 
-  String url = String("http://") + CAMERA_IP + ":" + CAMERA_PORT + "/" + command;
+  char url[128];
   if (vaultId != NULL && vaultId[0] != '\0') {
-    url += "?vault=";
-    url += vaultId;
+    snprintf(url, sizeof(url), "http://%s:%d/%s?vault=%s",
+             camIP.toString().c_str(), CAMERA_PORT, command, vaultId);
+  } else {
+    snprintf(url, sizeof(url), "http://%s:%d/%s",
+             camIP.toString().c_str(), CAMERA_PORT, command);
   }
 
   if (!http.begin(url)) {
@@ -564,32 +1176,68 @@ void sendCameraCommand(const char* command, const char* vaultId) {
   http.end();
 }
 
+IPAddress resolveCameraIPInternal() {
+  if (camIpValid && millis() - camIpCachedAt < CAM_IP_CACHE_MS) {
+    return cachedCamIP;
+  }
+
+  IPAddress ip = MDNS.queryHost(CAMERA_MDNS_HOST, 2000);
+  if (ip != IPAddress()) {
+    cachedCamIP = ip;
+    camIpCachedAt = millis();
+    camIpValid = true;
+    Serial.print("mDNS resolved ");
+    Serial.print(CAMERA_MDNS_HOST);
+    Serial.print(" -> ");
+    Serial.println(ip.toString());
+  } else {
+    camIpValid = false;
+    Serial.println("mDNS lookup failed - camera not found");
+  }
+  return ip;
+}
+
 // ---------------- OTP Submission ----------------
 
 void submitOtp(const char* otp) {
-  showScreen(VERIFYING);
+  NetMsg msg;
+  msg.op = OP_VERIFY_OTP;
+  strncpy(msg.reqOtp, otp, sizeof(msg.reqOtp) - 1);
+  msg.reqOtp[sizeof(msg.reqOtp) - 1] = '\0';
+  strncpy(msg.reqVault, selectedVault, sizeof(msg.reqVault) - 1);
+  msg.reqVault[sizeof(msg.reqVault) - 1] = '\0';
+  msg.resultCode = 0;
+  msg.resultBody[0] = '\0';
 
-  if (!ensureWiFiConnected()) {
+  if (xQueueSend(netReqQueue, &msg, 0) != pdPASS) {
+    Serial.println("Network queue full - verify dropped");
     lastResultSuccess = false;
-    lastResultMessage = "No WiFi!";
+    strncpy(lastResultMessage, "Busy - try again", sizeof(lastResultMessage) - 1);
     strcpy(lastResultVault, selectedVault);
     showScreen(RESULT);
     return;
   }
 
+  verifyStartedAt = millis();
+  showScreen(VERIFYING);
+}
+
+void submitOtpInternal(const char* otp, const char* vault, NetMsg* msg) {
+  if (!ensureWiFiConnected()) {
+    msg->resultCode = -1;
+    strcpy(msg->resultBody, "No WiFi!");
+    return;
+  }
+
   WiFiClientSecure client;
-  client.setInsecure(); // Skips certificate validation - fine for bench
-                        // testing. Before this vault is deployed for
-                        // real, pin Vercel's cert with setCACert().
+  client.setInsecure();
 
   HTTPClient http;
-  http.setTimeout(10000); // 10s timeout
+  http.setTimeout(10000);
 
   if (!http.begin(client, FUNCTION_URL)) {
-    lastResultSuccess = false;
-    lastResultMessage = "Connect failed";
-    strcpy(lastResultVault, selectedVault);
-    showScreen(RESULT);
+    msg->resultCode = -2;
+    strcpy(msg->resultBody, "Connect failed");
     return;
   }
 
@@ -598,91 +1246,82 @@ void submitOtp(const char* otp) {
   StaticJsonDocument<200> reqDoc;
   reqDoc["deviceId"] = DEVICE_ID;
   reqDoc["otp"] = otp;
-  reqDoc["vaultId"] = selectedVault;  // Include selected vault
-  String requestBody;
-  serializeJson(reqDoc, requestBody);
+  reqDoc["vaultId"] = vault;
+  char requestBody[200];
+  serializeJson(reqDoc, requestBody, sizeof(requestBody));
 
   Serial.print("Sending JSON: "); Serial.println(requestBody);
-  Serial.print("Selected vault: "); Serial.println(selectedVault);
+  Serial.print("Selected vault: "); Serial.println(vault);
   int httpCode = http.POST(requestBody);
-  String responseBody = http.getString();
+
+  // http.getString() returns Arduino String - copy to char[] buffer immediately
+  String respStr = http.getString();
 
   Serial.print("HTTP code: ");
   Serial.println(httpCode);
-  Serial.println("Response: " + responseBody);
+  Serial.print("Response: ");
+  Serial.println(respStr);
 
   http.end();
 
-  handleResponse(httpCode, responseBody);
+  msg->resultCode = httpCode;
+  strncpy(msg->resultBody, respStr.c_str(), sizeof(msg->resultBody) - 1);
+  msg->resultBody[sizeof(msg->resultBody) - 1] = '\0';
 }
 
-void handleResponse(int httpCode, String responseBody) {
-  StaticJsonDocument<512> resDoc;  // Increased size for debug info
+void handleResponse(int httpCode, const char* responseBody) {
+  StaticJsonDocument<512> resDoc;
   DeserializationError err = deserializeJson(resDoc, responseBody);
 
-  String message = "";
-  String debugMsg = "";  // For server debug info
+  char message[33] = "";
+  char debugMsg[101] = "";
   bool success = false;
 
   if (!err) {
     success = resDoc["success"] | false;
     if (resDoc.containsKey("message")) {
-      message = resDoc["message"].as<String>();
+      strncpy(message, resDoc["message"].as<const char*>(), sizeof(message) - 1);
     }
     if (resDoc.containsKey("debug")) {
-      debugMsg = resDoc["debug"].as<String>();
+      strncpy(debugMsg, resDoc["debug"].as<const char*>(), sizeof(debugMsg) - 1);
     }
   }
 
-  // Store for display
   strcpy(lastResultVault, selectedVault);
-  lastResultMessage = message;
   lastResultSuccess = false;
 
   if (httpCode == 200 && success) {
     clearLocalFailures();
     lastResultSuccess = true;
-    Serial.println("OTP Verified! Calling door controller...");
-
-    // Send unlock command to Door Controller ESP32
-    bool doorOpened = sendUnlockToDoorController(selectedVault);
-
-    if (doorOpened) {
-      Serial.println("Door unlocked successfully!");
-    } else {
-      Serial.println("Warning: Door controller unreachable - showing success anyway");
-      // Note: We still show success because OTP was verified
-      // The door may not have opened due to network issues
-    }
+#if ENABLE_SOLENOID_LOCKS
+    unlockVault(vaultIndexFromId(selectedVault));
+#endif
+    Serial.println("OTP Verified!");
   } else if (httpCode == 429) {
-    // Server already rate-limited us; sync local lockout
     lockoutUntilMs = millis() + LOCAL_LOCKOUT_MS;
-    lastResultMessage = message.length() ? message : "Too many attempts";
+    strncpy(lastResultMessage, strlen(message) ? message : "Too many attempts", sizeof(lastResultMessage) - 1);
+    saveLockoutToNVS();
   } else if (httpCode == 404) {
-    lastResultMessage = "Not registered";
+    strncpy(lastResultMessage, "Not registered", sizeof(lastResultMessage) - 1);
   } else if (httpCode == 403) {
-    // Could be invalid OTP OR not authorized for vault
     registerLocalFailure();
-    lastResultMessage = message.length() ? message : "Invalid OTP";
+    strncpy(lastResultMessage, strlen(message) ? message : "Invalid OTP", sizeof(lastResultMessage) - 1);
   } else if (httpCode == 400) {
-    lastResultMessage = message.length() ? message : "Bad request";
+    strncpy(lastResultMessage, strlen(message) ? message : "Bad request", sizeof(lastResultMessage) - 1);
   } else if (httpCode == 500) {
-    // Show debug info if available, otherwise message, otherwise generic error
-    if (debugMsg.length() > 0) {
-      lastResultMessage = "Err: " + debugMsg;
+    if (strlen(debugMsg) > 0) {
+      snprintf(lastResultMessage, sizeof(lastResultMessage), "Err: %s", debugMsg);
     } else {
-      lastResultMessage = message.length() ? message : "Server error";
+      strncpy(lastResultMessage, strlen(message) ? message : "Server error", sizeof(lastResultMessage) - 1);
     }
   } else if (httpCode <= 0) {
-    lastResultMessage = "Network error";
+    strncpy(lastResultMessage, "Network error", sizeof(lastResultMessage) - 1);
   } else {
-    lastResultMessage = "Error: " + String(httpCode);
+    snprintf(lastResultMessage, sizeof(lastResultMessage), "Error: %d", httpCode);
   }
 
-  // Print debug info to serial for troubleshooting
   Serial.print("Response message: "); Serial.println(message);
   Serial.print("Debug info: "); Serial.println(debugMsg);
 
   showScreen(RESULT);
-}   
-
+}

@@ -9,3 +9,9 @@ firmware/LogiBox_OTP_Vault/build/
 
 # VSCode (common for Arduino projects)
 .vscode/
+
+# Local tooling
+.vite/
+agent-skills/
+agents/
+skills/

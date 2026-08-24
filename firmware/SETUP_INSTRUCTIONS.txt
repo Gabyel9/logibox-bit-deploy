@@ -1,392 +1,530 @@
 ================================================================================
-          LOGIBOX DUAL ESP32 SETUP INSTRUCTIONS
+                 LOGIBOX ESP32 SETUP INSTRUCTIONS
 ================================================================================
 
-This guide explains how to set up two ESP32 boards to work together:
-  - ESP32 #1: Keypad + LCD (OTP Verification)
-  - ESP32 #2: Door Controller (Relay + Sensors)
+This guide explains how to set up the LogiBox delivery vault hardware:
 
+  - ESP32 #1: Keypad + LCD (OTP Verification + Camera Trigger)
+  - ESP32-CAM: Snapshot camera (delivery evidence)
+  - Optional: Reed switches (door detection) + IR sensors (parcel detection)
 
-================================================================================
-                        HARDWARE REQUIRED
-================================================================================
-
-For ESP32 #1 (Keypad/LCD) - You already have:
-  ✓ ESP32-S3 DevKit
-  ✓ 4x4 Keypad
-  ✓ I2C LCD (16x2 or 20x4)
-  ✓ Jumper wires
-
-For ESP32 #2 (Door Controller) - New:
-  ✓ ESP32 DevKit (30-pin)
-  ✓ 4-Channel Relay Module
-  ✓ 3x Solenoid Locks (12V)
-  ✓ 3x Reed Switches (door sensors)
-  ✓ 3x IR Sensors (FC-51) (parcel detection)
-  ✓ 12V Power Supply (3A or higher)
-  ✓ Breadboard + Jumper Wires
+There is no separate door-controller board. The keypad ESP32 verifies the OTP
+and starts/stops the ESP32-CAM so it captures delivery-evidence frames.
 
 
 ================================================================================
-                     PART 1: ESP32 #2 (DOOR CONTROLLER)
+                         HARDWARE REQUIRED
 ================================================================================
 
-STEP 1: CONNECT THE RELAY MODULE
+CURRENTLY WORKING:
+  [x] ESP32 DevKit (38-pin, CP2102)
+  [x] 4x4 Keypad
+  [x] I2C LCD (16x2, address 0x27)
+  [x] AI-Thinker ESP32-CAM (OV2640)
+  [x] USB-TTL adapter (FTDI/CP2102/CH340) for flashing the camera
+  [x] Jumper wires
+  [x] USB cable (for keypad ESP32)
+  [x] 3x Reed switches (one per vault door)
+  [x] 3x IR obstacle sensors (LM393, one per vault compartment)
+
+WORKING (JUST WIRED):
+  [x] 3x Reed switches (one per vault door)
+  [x] 3x IR obstacle sensors (LM393, one per vault compartment)
+
+TO BE WIRED:
+  [ ] 4-channel relay module (5V coils, opto-isolated)
+  [ ] 3x 12V solenoid locks (one per vault door)
+  [ ] External 12V/10A power supply for the solenoids
+
+
+================================================================================
+                       PART 1: KEYPAD ESP32 (ESP32 #1)
+================================================================================
+
+WIRING (ESP32 38-pin DevKit, CP2102)
+------------------------------------
+  Keypad Row 1  -> GPIO 4
+  Keypad Row 2  -> GPIO 5
+  Keypad Row 3  -> GPIO 14
+  Keypad Row 4  -> GPIO 13
+  Keypad Col 1  -> GPIO 15
+  Keypad Col 2  -> GPIO 16
+  Keypad Col 3  -> GPIO 17
+  Keypad Col 4  -> GPIO 18
+  LCD (I2C)     -> SDA GPIO 21, SCL GPIO 22, 5V, GND  (address 0x27)
+
+  Reed Switches (when ready to wire):
+    Reed V1     -> GPIO 25  (other leg to GND)
+    Reed V2     -> GPIO 26  (other leg to GND)
+    Reed V3     -> GPIO 27  (other leg to GND)
+    Note: Uses internal INPUT_PULLUP. Closed door = LOW, open door = HIGH.
+
+  IR Sensors (when ready to wire):
+    IR V1 OUT   -> GPIO 34
+    IR V2 OUT   -> GPIO 35
+    IR V3 OUT   -> GPIO 36
+    IR VCC      -> 3.3V (NOT 5V - GPIO 34-36 are 3.3V only!)
+    IR GND      -> GND
+    Note: LM393 push-pull output. Parcel present = LOW, empty = HIGH.
+
+  Relay Module - control side (low voltage):
+    Relay IN1   -> GPIO 32  (Vault 1 lock)
+    Relay IN2   -> GPIO 33  (Vault 2 lock)
+    Relay IN3   -> GPIO 19  (Vault 3 lock)
+    Relay IN4   -> GPIO 23  (spare channel, unused)
+    Relay VCC   -> ESP32 5V/VIN pin (powers relay coils; NOT the 3.3V pin)
+    Relay GND   -> ESP32 GND
+    Note: The firmware drives relays active-LOW (GPIO LOW = energized).
+    This is fail-secure at boot: ESP32 pins float high during reset, so
+    all locks stay engaged until the firmware explicitly releases one.
+
+  Note: GPIO 6/7 are the ESP32-WROOM-32 internal flash pins and are NOT used.
+  GPIO 1/3 (USB serial to CP2102) and GPIO 34-39 (input-only) are also avoided.
+
+CODE CONFIG (config.h)
+----------------------
+  - DEVICE_ID: must match a device doc in Firestore, e.g. devices/esp32-test-001
+  - FUNCTION_URL: your deployed /api/device-verify-otp endpoint
+  - ENABLE_REED_SWITCHES: set to 1 when reed switches are wired
+  - ENABLE_IR_SENSORS: set to 1 when IR sensors are wired
+  - WiFi credentials are NOT in the code. They are set once per device via
+    the WiFiManager portal (see "WIFI & NETWORK SETUP" below).
+
+UPLOAD
+------
+  1. Install the CP210x USB driver (silabs.com) so the board shows up as a COM port.
+  2. Open LogiBox_OTP_Vault.ino in Arduino IDE
+  3. Board: ESP32 Dev Module
+     - Upload Speed: 115200
+  4. Install libraries:
+     - Keypad (Mark Stanley)
+     - LiquidCrystal I2C (Frank de Brabander)
+     - ArduinoJson (Benoit Blanchon)
+     - WiFiManager (tablatronix)
+  5. Select the COM port for your CP2102 board and upload.
+     If the upload fails to connect, hold the BOOT button, press RESET,
+     keep BOOT held until the upload starts, then release.
+  6. Open Serial Monitor @ 115200
+
+
+================================================================================
+                       PART 2: ESP32-CAM (SNAPSHOT CAMERA)
+================================================================================
+
+The ESP32-CAM has no USB port, so you flash it through a USB-TTL adapter:
+
+WIRING (USB-TTL <-> ESP32-CAM)
 -------------------------------
-The relay module controls the solenoid locks.
+  USB-TTL 3.3V  -> ESP32-CAM 3.3V
+  USB-TTL GND   -> ESP32-CAM GND
+  USB-TTL TX    -> ESP32-CAM GPIO3 (RX)
+  USB-TTL RX    -> ESP32-CAM GPIO1 (TX)
+  USB-TTL DTR/3.3V -> GPIO0 (hold to GND while powering to enter flash mode)
 
-Connect relay module to ESP32:
-  Relay IN1 → GPIO 18  (controls Door 1)
-  Relay IN2 → GPIO 19  (controls Door 2)
-  Relay IN3 → GPIO 21  (controls Door 3)
-  Relay IN4 → (unused - can use if you add a 4th door)
+FLASHING
+--------
+  1. Connect GPIO0 to GND, then plug in / power the ESP32-CAM
+  2. Open LogiBox_ESP32CAM.ino in Arduino IDE
+  3. Board: AI-Thinker ESP32-CAM
+     - PSRAM: Enabled
+     - Flash: 4MB
+     - Partition: Huge APP
+     - Flash Mode: QIO
+  4. Install libraries: esp32-camera (espressif), WiFiManager (tablatronix)
+  5. Select the USB-TTL serial port and upload
+  6. Remove the GPIO0-to-GND jumper and press the reset button
+  7. Open Serial Monitor @ 115200 and note the assigned IP + mDNS hostname
 
-  Relay VCC  → 5V (or 3.3V if your relay is 3.3V compatible)
-  Relay GND  → GND
+CODE CONFIG (LogiBox_ESP32CAM.ino)
+----------------------------------
+  - DEVICE_ID: devices/esp32-cam-001 in Firestore (ownerUid must be set)
+  - FUNCTION_URL: your deployed /api/camera-upload endpoint
+  - MDNS_HOSTNAME: "logiboxcam" (the keypad resolves this to find the camera)
+  - WiFi credentials are NOT in the code - set them via the portal
+    (see "WIFI & NETWORK SETUP" below).
 
-NOTE: Most relay modules work with 5V signal. If your relay needs 5V
-but ESP32 outputs 3.3V, you may need a level shifter OR use a relay
-that works with 3.3V logic.
+CAMERA COMMANDS (LAN HTTP)
+--------------------------
+  http://logiboxcam.local/start          -> begin capturing every 5 seconds
+  http://logiboxcam.local/start?vault=2  -> begin capturing, tag session "vault 2"
+  http://logiboxcam.local/stop           -> stop capturing
+  (or use the camera's assigned IP printed in Serial after boot)
 
-
-STEP 2: CONNECT SOLENOID LOCKS
------------------------------
-Each solenoid lock needs its own power source (12V).
-
-For Door 1:
-  Solenoid positive (+) → Relay NO1 (Normally Open)
-  Solenoid negative (-)  → 12V Power Supply negative (-)
-
-  Power Supply 12V (+) → Relay COM1 (Common)
-
-For Door 2:
-  Solenoid positive (+) → Relay NO2
-  Solenoid negative (-)  → 12V Power Supply negative (-)
-  Power Supply 12V (+) → Relay COM2
-
-For Door 3:
-  Solenoid positive (+) → Relay NO3
-  Solenoid negative (-)  → 12V Power Supply negative (-)
-  Power Supply 12V (+) → Relay COM3
-
-IMPORTANT: Make sure all negative (-) wires are connected together:
-  - 12V Power Supply negative
-  - Solenoid negative
-  - ESP32 GND (for common ground)
-
-
-STEP 3: CONNECT REED SWITCHES (DOOR SENSORS)
---------------------------------------------
-Reed switches detect if the door is open or closed.
-
-Connect one wire of each reed switch to GND on ESP32.
-Connect the other wire to the GPIO pins:
-
-  Reed Switch Door 1 → GPIO 22
-  Reed Switch Door 2 → GPIO 23
-  Reed Switch Door 3 → GPIO 25
-
-The code uses INPUT_PULLUP, so you don't need external pull-up resistors.
-When magnet is NEAR reed switch = door is CLOSED (HIGH)
-When magnet is FAR from reed switch = door is OPEN (LOW)
-
-
-STEP 4: CONNECT IR SENSORS (PARCEL DETECTION)
----------------------------------------------
-FC-51 IR sensors detect if a parcel is placed inside the vault.
-
-Connect each IR sensor:
-
-  IR Sensor Door 1:
-    VCC  → 3.3V (or 5V)
-    GND  → GND
-    OUT  → GPIO 12
-
-  IR Sensor Door 2:
-    VCC  → 3.3V (or 5V)
-    GND  → GND
-    OUT  → GPIO 13
-
-  IR Sensor Door 3:
-    VCC  → 3.3V (or 5V)
-    GND  → GND
-    OUT  → GPIO 14
-
-NOTE: Adjust the sensitivity knob on the IR sensor using a screwdriver:
-  - Turn clockwise = more sensitive (detects further)
-  - Turn counter-clockwise = less sensitive
-
-Test: IR sensor outputs LOW when object detected, HIGH when clear.
-
-
-STEP 5: COMPLETE WIRING DIAGRAM
--------------------------------
-
-                    ESP32 #2 (Door Controller)
-                    ════════════════════════
-
-    ┌─────────────────────────────────────────────────────┐
-    │                                                     │
-    │   RELAY MODULE              4-CHANNEL               │
-    │   ┌──────┬──────┬──────┬──────┐                   │
-    │   │ IN1  │ IN2  │ IN3  │ IN4  │                   │
-    │   └──────┴──────┴──────┴──────┘                   │
-    │      │      │      │                              │
-    │      ▼      ▼      ▼                              │
-    │   GPIO 18 GPIO 19 GPIO 21                        │
-    │                                                     │
-    │   COM1   COM2   COM3   ←── 12V+ from power supply │
-    │    │      │      │                                 │
-    │   NO1   NO2   NO3   ←── to solenoid +            │
-    │    │      │      │                                 │
-    └────┼──────┼──────┼─────────────────────────────────┘
-         │      │      │
-         ▼      ▼      ▼
-      ┌─────────────────────┐
-      │   SOLENOID LOCKS    │
-      │   (12V)            │
-      │  Door 1 Door 2 Door 3
-      └─────────┬───────────┘
-                │
-         ┌──────┴──────┐
-         │ 12V Power   │
-         │ Supply (-)  │
-         └─────────────┘
-
-
-    ┌──────────────────────────────────────────┐
-    │ REED SWITCHES (Door Sensors)             │
-    │                                          │
-    │  Door 1: GPIO 22 ──► one side           │
-    │                     └──► GND             │
-    │                                          │
-    │  Door 2: GPIO 23 ──► one side           │
-    │                     └──► GND             │
-    │                                          │
-    │  Door 3: GPIO 25 ──► one side           │
-    │                     └──► GND             │
-    └──────────────────────────────────────────┘
-
-
-    ┌──────────────────────────────────────────┐
-    │ IR SENSORS (Parcel Detection)            │
-    │                                          │
-    │  Door 1: GPIO 12 ◄── OUT                │
-    │         3.3V  ◄── VCC                   │
-    │         GND   ◄── GND                   │
-    │                                          │
-    │  Door 2: GPIO 13 ◄── OUT                │
-    │         3.3V  ◄── VCC                   │
-    │         GND   ◄── GND                   │
-    │                                          │
-    │  Door 3: GPIO 14 ◄── OUT                │
-    │         3.3V  ◄── VCC                   │
-    │         GND   ◄── GND                   │
-    └──────────────────────────────────────────┘
+The keypad calls these automatically when a delivery session starts/stops.
 
 
 ================================================================================
-                     PART 2: ESP32 #1 (KEYPAD/LCD)
+                        PART 3: SOLENOID LOCKS (12V + RELAY)
 ================================================================================
 
-STEP 1: UPDATE THE CODE
------------------------
-In the file LogiBox_OTP_Vault.ino, find this section around line 47:
+Each vault door is held by a 12V solenoid lock switched through one relay
+channel of a 4-channel module.
 
-  // Door Controller ESP32 IP - change to match your ESP32 #2 IP
-  const char* DOOR_CONTROLLER_IP = "192.168.1.150";
-  const int DOOR_CONTROLLER_PORT = 80;
+WIRING (power side, per channel - keep 12V wiring separate from ESP32)
+------------------------------------------------------------------------
+  12V PSU (+)   -> Relay COM terminal
+  Relay NO      -> Solenoid (+)
+  Solenoid (-)  -> 12V PSU (-)
 
-Change "192.168.1.150" to the IP address that your Door Controller
-ESP32 will use (see Step 2 below).
+  Channel -> Vault mapping (matches the control-side pins):
+    IN1 = Vault 1, IN2 = Vault 2, IN3 = Vault 3, IN4 = spare
 
+  Use the NO (Normally Open) terminals: when the relay coil is off, the
+  circuit is broken, so the solenoid stays locked. The 12V ground does NOT
+  connect to the ESP32 ground - the only link between the two sides is
+  through the relay contacts themselves.
 
-STEP 2: UPLOAD AND FIND IP
----------------------------
-1. Upload the Door Controller code (LogiBox_Door_Controller.ino) to ESP32 #2
-2. Open Arduino IDE Serial Monitor (115200 baud)
-3. Look for a line that says "IP Address: 192.168.1.xxx"
-4. Copy that IP address
+HOW IT WORKS
+------------
+  1. Correct OTP for vault N -> relay N energizes -> solenoid releases.
+  2. LCD shows "Vault N unlocked / Pull door open".
+  3. User pulls the door open (reed switch sees OPEN), takes/leaves parcel,
+     closes the door again.
+  4. When the reed switch reports CLOSED, the solenoid re-engages and the
+     keypad returns to the Select Vault screen.
 
-Example output:
-  === LogiBox Door Controller Starting ===
-  Connecting to WiFi...
-  WiFi connected!
-  IP Address: 192.168.1.150
+FAILSAFES
+---------
+  - If the door never opens OR stays open, the lock force-re-engages after
+    UNLOCK_MAX_TIMEOUT_MS (30s, config.h).
+  - Power loss, WiFi loss, crash or watchdog reset => relays drop => locked.
+  - Wrong OTP or rate-limited OTP never actuates any lock.
 
-5. Update the DOOR_CONTROLLER_IP in ESP32 #1's code with this IP
-6. Re-upload the Keypad/LCD code to ESP32 #1
+BENCH-TEST FIRST
+----------------
+  Wire only the control side (relays + ESP32), flash the firmware, run
+  TEST 6 below, and watch the relay onboard LEDs before connecting the
+  actual solenoids.
 
 
 ================================================================================
-                     PART 3: TESTING
+                        FEATURE FLAGS
 ================================================================================
 
-TEST 1: TEST DOOR CONTROLLER API
---------------------------------
-After uploading to ESP32 #2, open your web browser and visit:
+In config.h, three flags control optional hardware:
 
-  http://<YOUR_ESP32_IP>/status
+  #define ENABLE_REED_SWITCHES  1    <-- active, reeds are wired
+  #define ENABLE_IR_SENSORS     1    <-- active, IR sensors are wired
+  #define ENABLE_SOLENOID_LOCKS 1    <-- active, relay + solenoids wired
 
-Example:
-  http://192.168.1.150/status
+When OFF (0):
+  - The GPIO pins are not initialized (no conflict if nothing is connected)
+  - Boot self-test skips sensor/lock checks
+  - The firmware runs with keypad + LCD + camera only
+  - With locks off, a successful OTP only shows ACCESS GRANTED
 
-You should see something like:
-  {"door1":{"open":false,"parcel":false},"door2":{"open":false,"parcel":false},"door3":{"open":false,"parcel":false}}
-
-- "open":true  means door is OPEN
-- "open":false means door is CLOSED
-- "parcel":true  means parcel DETECTED
-- "parcel":false means NO parcel
-
-
-TEST 2: TEST UNLOCKING A DOOR
------------------------------
-In your browser, visit:
-
-  http://<YOUR_ESP32_IP>/open/1
-
-You should hear the relay click and the door should unlock for 0.5 seconds
-then lock again automatically.
-
-Try:
-  http://192.168.1.150/open/2
-  http://192.168.1.150/open/3
+When ON (1):
+  - GPIO pins are set up as INPUT_PULLUP (reeds), INPUT (IR) and the relay
+    pins as OUTPUT driven to the locked level at the very start of setup()
+  - Boot self-test reads and prints sensor states + lock states
+  - Door open/close and parcel present/empty events are monitored in the
+    main loop; a successful OTP releases that vault's lock until the door
+    closes again (or UNLOCK_MAX_TIMEOUT_MS elapses)
+  - If reed switches are disabled while locks are enabled, unlocking falls
+    back to a fixed timed window (UNLOCK_FALLBACK_MS) since there is no
+    way to detect the door closing
 
 
-TEST 3: TEST SENSORS
+================================================================================
+                         BOOT SELF-TEST
+================================================================================
+
+On every power-up or reset, the keypad ESP32 runs this sequence:
+
+  1. LCD splash screen ("LogiBox / Smart Vault v1.0") for 1.5 seconds
+  2. If reed switches enabled: reads and prints door states
+  3. If IR sensors enabled: reads and prints parcel states
+  4. If solenoid locks enabled: prints lock states (always LOCKED at boot,
+     no solenoid is ever actuated during the self-test)
+  5. Keypad check: shows "Press any key to continue..." (5s timeout)
+  6. Increments boot counter in NVS (non-volatile storage)
+  7. Shows "All OK - Boot #N" for 1 second
+  8. Connects to WiFi (shows "Connecting WiFi" on LCD)
+  9. Restores lockout state from NVS (if previously locked out)
+  10. Enters the main vault selection screen
+
+
+================================================================================
+                       PARALLAX SCROLLING
+================================================================================
+
+When an LCD message exceeds 16 characters (e.g. error messages, lockout
+timer), it automatically scrolls horizontally on both LCD lines.
+
+  - Scroll speed: 300ms per character (SCROLL_SPEED_MS in config.h)
+  - Pause at edges: 1000ms before scrolling starts/resumes (SCROLL_PAUSE_MS)
+  - Applies to: OTP result messages, lockout countdown, status displays
+  - Short messages (<=16 chars) display normally without scrolling
+
+
+================================================================================
+                    NVS PERSISTENCE (NON-VOLATILE STORAGE)
+================================================================================
+
+The ESP32's NVS (Preferences library) stores data that survives reboots
+and re-flashes:
+
+  - Lockout timer: if the device locks out from too many failed OTPs,
+    the lockout expiry time is saved. On reboot, the lockout continues
+    from where it left off.
+  - Fail count: number of consecutive failed OTP attempts (resets on
+    success or after lockout expires).
+  - Boot count: incremented every boot (shown on LCD during self-test).
+
+Namespace: "logibox"
+
+
+================================================================================
+                       WATCHDOG TIMER
+================================================================================
+
+A hardware watchdog timer (WDT) is configured for 15 seconds. If the
+main loop hangs for more than 15 seconds, the ESP32 automatically resets.
+
+  - Timeout: 15 seconds (WDT_TIMEOUT_SEC in config.h)
+  - Set to 0 to disable
+  - The watchdog is fed in the main loop() on every iteration
+  - On reset, the full boot self-test sequence runs again
+
+
+================================================================================
+                    NON-BLOCKING ARCHITECTURE
+================================================================================
+
+All network work (camera commands, OTP verification) runs in a separate
+FreeRTOS task pinned to core 0. The main loop (core 1) never blocks:
+
+  - Keypad input stays responsive during HTTP calls
+  - LCD updates happen immediately (no delay from network)
+  - Camera start/stop commands don't freeze the keypad
+  - OTP verification runs in background; result is queued back to main loop
+
+Network requests go into a queue (max 4 pending). Results come back through
+a separate queue and are processed on the main loop. Solenoid lock release
+and re-lock timing are also handled on the main loop using the debounced
+reed switch states - no blocking delays anywhere in the unlock flow.
+
+
+================================================================================
+                            TESTING
+================================================================================
+
+TEST 1: KEYPAD ALONE (NO SENSORS)
+---------------------------------
+  1. Flash the firmware with ENABLE_REED_SWITCHES=0, ENABLE_IR_SENSORS=0
+  2. Open Serial Monitor @ 115200
+  3. Boot sequence should complete (splash -> self-test -> WiFi -> ready)
+  4. Press any key -> "Select Vault" -> pick vault 1/2/3
+  5. Enter a 6-digit OTP -> "Verifying..." -> result displayed
+  6. Press * to go back to vault selection
+
+TEST 2: CAMERA ALONE
 --------------------
-Open door 1 → Refresh /status → "door1":{"open":true,...}
-Close door 1 → Refresh /status → "door1":{"open":false,...}
+  1. Power the ESP32-CAM on the same WiFi as the keypad
+  2. Visit http://logiboxcam.local/start in a browser
+  3. Open the web app -> Camera page -> "Captured Sessions"
+  4. A session with new frames should appear every 5 seconds
 
-Place object in front of IR sensor 1 → Refresh /status → "door1":{"parcel":true,...}
-Remove object → Refresh /status → "door1":{"parcel":false,...}
+TEST 3: KEYPAD + CAMERA (END-TO-END)
+------------------------------------
+  1. Power both ESP32s and make sure they are on the same WiFi
+  2. Sign in to the web app as the device owner
+  3. On the keypad, press any key -> "Select Vault" -> pick a vault (1/2/3)
+  4. Enter the correct OTP -> "ACCESS GRANTED"
+  5. The camera starts capturing and uploads frames tagged with that vault
+  6. In the web app, Camera page shows the session; download a frame
 
+TEST 4: REED SWITCHES (NOW ACTIVE)
+-----------------------------------
+  1. Re-flash the keypad ESP32 (feature flag is already enabled)
+  2. Boot self-test should print door states (CLOSED/OPENED for each vault)
+  3. Open/close a vault door -> Serial prints the state change
+  4. LCD shows door status updates
 
-TEST 4: FULL INTEGRATION TEST
------------------------------
-1. Make sure both ESP32 boards are powered on and connected to WiFi
-2. On ESP32 #1 (Keypad/LCD), select a vault (1, 2, or 3)
-3. Enter the correct OTP
-4. After verification, ESP32 #1 should call ESP32 #2
-5. You should see "ACCESS GRANTED" on the LCD
-6. The corresponding door on ESP32 #2 should unlock
+TEST 5: IR SENSORS (NOW ACTIVE)
+--------------------------------
+  1. Re-flash the keypad ESP32 (feature flag is already enabled)
+  2. Boot self-test should print parcel states (PRESENT/EMPTY for each vault)
+  3. Place/remove a parcel -> Serial prints the state change
+  4. LCD shows parcel status updates
+
+TEST 6: SOLENOID LOCKS (BENCH TEST - RELAYS ONLY, NO 12V)
+----------------------------------------------------------
+  1. Wire only the relay control side (IN1/2/3 + VCC + GND to the ESP32).
+     Leave the solenoids and the 12V supply DISCONNECTED for now.
+  2. Flash the firmware and open Serial Monitor @ 115200.
+  3. Boot self-test should print "Vault N lock: LOCKED" x3 with NO relay
+     clicking at any point during boot.
+  4. Select a vault and enter a WRONG OTP -> no relay LED changes.
+  5. Enter the CORRECT OTP -> after ACCESS GRANTED, the LCD shows
+     "Vault N unlocked / Pull door open" and that channel's LED lights up.
+     Serial prints "Vault N UNLOCKED".
+  6. Trigger the reed switch (open then close the door or wave a magnet):
+     when it reports CLOSED again, the LED turns off, Serial prints
+     "Vault N RELOCKED" and the keypad returns to Select Vault.
+  7. Repeat step 5 but leave the door alone -> after ~30s the LED turns off
+     by itself (failsafe timeout) and the LCD flashes "Auto-locked".
+  8. Power-cycle mid-unlock -> relays drop immediately (fail-secure).
+
+TEST 7: SOLENOID LOCKS (FULL 12V)
+---------------------------------
+  Only after TEST 6 passes: connect the solenoids through the COM/NO
+  terminals to the 12V supply and repeat steps 5-8. You should hear each
+  solenoid click/retract on unlock and re-engage on door close.
 
 
 ================================================================================
-                     TROUBLESHOOTING
+                         TROUBLESHOOTING
 ================================================================================
 
-PROBLEM: "ERR_CONNECTION_REFUSED" when calling door controller
+PROBLEM: ESP32-CAM won't enter download mode
 SOLUTION:
-  - Check that ESP32 #2 is powered on
-  - Verify the IP address is correct in ESP32 #1's code
-  - Make sure both ESP32s are on the same WiFi network
-  - Check Serial Monitor for errors
+  - GPIO0 must be held to GND BEFORE power is applied
+  - Keep the jumper in place until the upload starts
+  - Some USB-TTL adapters need EN grounded; try powering via 5V + EN to GND
 
-PROBLEM: Door doesn't unlock (no click sound)
+PROBLEM: Keypad says OTP verified but no session appears in the app
 SOLUTION:
-  - Check relay connections (VCC, GND, IN pins)
-  - Verify 12V power supply is working
-  - Check that solenoid wires are connected properly
+  - Confirm both ESP32s are on the SAME 2.4GHz WiFi network
+  - Check devices/esp32-cam-001 in Firestore has your ownerUid set
+  - Test the camera alone first (TEST 2)
 
-PROBLEM: IR sensor always shows "parcel detected"
+PROBLEM: No frames captured
 SOLUTION:
-  - Adjust the sensitivity knob with a screwdriver
-  - Make sure nothing is in front of the sensor
-  - Check wiring (VCC, GND, OUT)
+  - Check the ESP32-CAM Serial Monitor for upload errors (HTTP code)
+  - Verify FUNCTION_URL points to your deployed /api/camera-upload
+  - Make sure both ESP32s joined the SAME network (set via the portal)
 
-PROBLEM: Reed switch always shows "door open"
+PROBLEM: Camera works but session label is missing/empty
 SOLUTION:
-  - Make sure magnet is close to the reed switch
-  - Check wiring connections
-  - Try reversing the reed switch wires
+  - Sessions started from the keypad include ?vault=N. Sessions started
+    manually via /start have no vault and appear under "Unsorted".
 
-PROBLEM: One ESP32 can't connect to WiFi
+PROBLEM: Keypad shows "Self-test... Check sensors"
 SOLUTION:
-  - Verify WiFi credentials are correct
-  - Make sure you're using 2.4GHz WiFi (not 5GHz)
-  - Check that your router allows new devices
+  - A sensor is failing its boot check. Check Serial Monitor for which
+    vault sensor reported an unexpected state. Verify wiring.
+
+PROBLEM: Relay LED is ON when it should be off (inverted behavior)
+SOLUTION:
+  - Your relay board is active-HIGH. Set RELAY_ACTIVE_LOW to 0 in config.h
+    and re-flash.
+
+PROBLEM: OTP verified but no relay clicks / no solenoid movement
+SOLUTION:
+  - Check Serial Monitor for "Vault N UNLOCKED". If present, the firmware
+    is fine: verify INx wire goes to the right GPIO, relay VCC is on 5V
+    (VIN) not 3.3V, and relay GND is shared with the ESP32.
+  - If missing entirely, ENABLE_SOLENOID_LOCKS may be 0 in config.h.
+
+PROBLEM: Lock never re-engages after closing the door
+SOLUTION:
+  - The reed switch for that vault is not reporting CLOSED (check boot
+    self-test output and door state prints). Verify reed wiring/alignment.
+  - The 30s failsafe will still force a re-lock eventually.
+
+PROBLEM: Solenoid hums but does not retract
+SOLUTION:
+  - Not enough current from the 12V supply or too thin wires. The 10A
+    supply has plenty of headroom; check the solenoid's rated voltage and
+    your wiring gauge/connections.
 
 
 ================================================================================
-                     IP ADDRESS SETTINGS
+                         WIFI & NETWORK SETUP
 ================================================================================
 
-In the Door Controller code (LogiBox_Door_Controller.ino), you can set a
-static IP address. Look for this section around line 40:
+No WiFi credentials are stored in the firmware. Each device is configured
+ONCE via the WiFiManager captive portal - this is also how you move the
+hardware to a different network later without editing or re-flashing code.
 
-  IPAddress staticIP(192, 168, 1, 150);
-  IPAddress gateway(192, 168, 1, 1);
-  IPAddress subnet(255, 255, 255, 0);
+FIRST-TIME WIFI SETUP (per device)
+----------------------------------
+  1. Power the device. If it has no saved network it starts a portal hotspot:
+       ESP32-CAM  -> AP name "LogiBoxCam"
+       Keypad     -> AP name "LogiBoxKeypad" (LCD shows "Join WiFi: LogiBoxKeypad")
+  2. From a phone, join that hotspot (no password).
+  3. Open http://192.168.4.1 in the phone browser.
+  4. Pick your WiFi network, enter its password, save.
+  5. Device reboots and connects. Set up the other device the same way -
+     BOTH must be on the SAME network so the keypad can reach the camera.
 
-Change these to match your network:
-  - staticIP: The IP you want for the ESP32 (must be available)
-  - gateway: Your router's IP address (usually ends in .1)
-  - subnet: Usually 255.255.255.0 for home networks
+CHANGING NETWORKS LATER (e.g. deploying at a site)
+--------------------------------------------------
+  - The credentials are saved in NVS and survive re-flashes.
+  - To change network: power-cycle the device while its current network is
+    unavailable (or wait for it to fail to connect) - the portal AP restarts.
+    Re-run the steps above. No code changes, no laptop needed.
+  - ESP32-CAM shortcut: to force the portal even when the old network is still
+    in range, power the camera on, then within ~5s HOLD the FLASH button
+    (GPIO0) for 3 seconds and RELEASE it. The camera erases its saved WiFi and
+    reopens the "LogiBoxCam" portal. The FLASH button is the GPIO0-to-GND
+    button on the ESP32-CAM-MB programmer board. Do NOT hold GPIO0 during
+    power-on - that enters download (flash) mode.
 
-To find your network settings:
-  - Windows: Open Command Prompt, type "ipconfig"
-  - Look for "Default Gateway" and "Subnet Mask"
-
-
-================================================================================
-                     PIN SUMMARY TABLE
-================================================================================
-
-ESP32 #1 (Keypad/LCD) - Existing Connections:
-  ╔════════════════════════════════════════════════════╗
-  ║ Component      │ GPIO Pin  │ Notes                 ║
-  ╠════════════════════════════════════════════════════╣
-  ║ Keypad Row 1  │ GPIO 4    │                       ║
-  ║ Keypad Row 2  │ GPIO 5    │                       ║
-  ║ Keypad Row 3  │ GPIO 6    │                       ║
-  ║ Keypad Row 4  │ GPIO 7    │                       ║
-  ║ Keypad Col 1  │ GPIO 15   │                       ║
-  ║ Keypad Col 2  │ GPIO 16   │                       ║
-  ║ Keypad Col 3  │ GPIO 17   │                       ║
-  ║ Keypad Col 4  │ GPIO 18   │ ⚠️ Used by ESP32 #2   ║
-  ║                │           │    (no conflict if    ║
-  ║                │           │    separate boards)    ║
-  ║ LCD (I2C)      │ GPIO 1    │ TX (for I2C)          ║
-  ║ LCD (I2C)      │ GPIO 3    │ RX (for I2C)          ║
-  ╚════════════════════════════════════════════════════╝
-
-ESP32 #2 (Door Controller) - New Connections:
-  ╔════════════════════════════════════════════════════╗
-  ║ Component          │ GPIO Pin  │ Notes           ║
-  ╠════════════════════════════════════════════════════╣
-  ║ Relay Door 1       │ GPIO 18   │                 ║
-  ║ Relay Door 2       │ GPIO 19   │                 ║
-  ║ Relay Door 3       │ GPIO 21   │                 ║
-  ║ Reed Switch Door 1 │ GPIO 22   │                 ║
-  ║ Reed Switch Door 2 │ GPIO 23   │                 ║
-  ║ Reed Switch Door 3 │ GPIO 25   │                 ║
-  ║ IR Sensor Door 1   │ GPIO 12   │                 ║
-  ║ IR Sensor Door 2   │ GPIO 13   │                 ║
-  ║ IR Sensor Door 3   │ GPIO 14   │                 ║
-  ║ Status LED         │ GPIO 2    │ Built-in LED    ║
-  ╚════════════════════════════════════════════════════╝
+CAMERA DISCOVERY
+----------------
+  - The camera advertises the mDNS hostname "logiboxcam". The keypad resolves
+    it automatically, so it works on ANY network (DHCP IP, no static config).
+  - CAMERA_IP in the keypad code is only a fallback if mDNS fails; set it to
+    your network's range if you ever need it (e.g. 192.168.100.151).
 
 
 ================================================================================
-                     FILES IN THIS PROJECT
+                         PIN SUMMARY TABLE
+================================================================================
+
+ESP32 #1 (Keypad/LCD) - 38-pin DevKit (CP2102):
+  [Component       ] [GPIO Pin] [Status      ]
+  Keypad Row 1       GPIO 4      Working
+  Keypad Row 2       GPIO 5      Working
+  Keypad Row 3       GPIO 14     Working
+  Keypad Row 4       GPIO 13     Working
+  Keypad Col 1       GPIO 15     Working
+  Keypad Col 2       GPIO 16     Working
+  Keypad Col 3       GPIO 17     Working
+  Keypad Col 4       GPIO 18     Working
+  LCD SDA            GPIO 21     Working
+  LCD SCL            GPIO 22     Working
+  Reed Switch V1     GPIO 25     Working
+  Reed Switch V2     GPIO 26     Working
+  Reed Switch V3     GPIO 27     Working
+  IR Sensor V1       GPIO 34     Working (INPUT ONLY)
+  IR Sensor V2       GPIO 35     Working (INPUT ONLY)
+  IR Sensor V3       GPIO 36     Working (INPUT ONLY)
+  Relay IN1 (Lock1)  GPIO 32     Wired, bench test pending
+  Relay IN2 (Lock2)  GPIO 33     Wired, bench test pending
+  Relay IN3 (Lock3)  GPIO 19     Wired, bench test pending
+  Relay IN4 (spare)  GPIO 23     Defined, unused
+
+  Free output pins (available for future use):
+    GPIO 2   (strapping - must be HIGH at boot)
+    GPIO 12  (strapping - must be HIGH at boot)
+
+  Input-only pins (cannot be used for output):
+    GPIO 34, 35, 36, 39
+
+
+================================================================================
+                         FILES IN THIS PROJECT
 ================================================================================
 
   LogiBox_OTP_Vault/
-    └── LogiBox_OTP_Vault.ino
-        → Upload to ESP32 #1 (Keypad/LCD)
-
-  LogiBox_Door_Controller/
-    └── LogiBox_Door_Controller.ino
-        → Upload to ESP32 #2 (Door Controller)
+    LogiBox_OTP_Vault.ino  -> Keypad + LCD (OTP verification, camera trigger)
+    config.h               -> All compile-time constants, feature flags
+    types.h                -> Structs and enums
+  LogiBox_ESP32CAM/
+    LogiBox_ESP32CAM.ino   -> Snapshot camera (captures + uploads evidence)
 
 
 ================================================================================
-                     LAST UPDATED
+                         LAST UPDATED
 ================================================================================
 
 Created: July 2026
+Updated: August 2026 (reliability features, parallax scrolling, NVS
+  persistence, watchdog, feature flags, reed/IR sensor support, mDNS
+  camera discovery, 38-pin DevKit pinout, solenoid lock release via
+  4-channel relay with close-door re-lock + failsafe timeout)
 For: LogiBox OTP Vault System
-
 ================================================================================
