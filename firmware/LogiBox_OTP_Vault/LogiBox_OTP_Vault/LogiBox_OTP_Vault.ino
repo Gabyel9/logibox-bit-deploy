@@ -443,6 +443,9 @@ void networkTask(void* param) {
           submitOtpInternal(msg.reqOtp, msg.reqVault, &msg);
           xQueueSend(netResultQueue, &msg, 0);
           break;
+        case OP_REPORT_EVENT:
+          sendEventInternal(msg.reqEvent, msg.reqVault);
+          break;
         default:
           break;
       }
@@ -981,6 +984,7 @@ void checkLockStates() {
     // the parcel.
     if (!locks[i].doorOpenedDuringUnlock && doorOpen) {
       locks[i].doorOpenedDuringUnlock = true;
+      requestEventReport("door_opened", ALLOWED_VAULTS[i]);
       updateDoorUnlockedPrompt(i);
       continue;
     }
@@ -992,6 +996,7 @@ void checkLockStates() {
         !locks[i].parcelDetectedDuringUnlock &&
         parcels[i].present) {
       locks[i].parcelDetectedDuringUnlock = true;
+      requestEventReport("parcel_placed", ALLOWED_VAULTS[i]);
       updateDoorUnlockedPrompt(i);
       continue;
     }
@@ -1011,6 +1016,7 @@ void checkLockStates() {
         // Door closed before a parcel was detected — relock and warn the
         // rider so they restart the delivery sequence.
         relockVault(i);
+        requestEventReport("no_parcel", ALLOWED_VAULTS[i]);
         if (currentState == DOOR_UNLOCKED) {
           lastActivityTime = millis();
           flashLine("No parcel detected", 1500, SELECT_VAULT);
@@ -1020,11 +1026,17 @@ void checkLockStates() {
     }
 
     relockVault(i);
+    // Normal completion (door closed + parcel confirmed) marks the vault
+    // occupied; a failsafe timeout just aborts the session.
+    requestEventReport(timedOut ? "auto_locked" : "door_closed_locked", ALLOWED_VAULTS[i]);
 #else
     if (!timedOut && elapsed < UNLOCK_FALLBACK_MS) {
       continue;
     }
     relockVault(i);
+    // No door/parcel feedback without reed + IR: a timed unlock is reported
+    // as a plain auto-lock (it only clears deliveryInProgress).
+    requestEventReport("auto_locked", ALLOWED_VAULTS[i]);
 #endif
 
     if (currentState == DOOR_UNLOCKED) {
@@ -1258,10 +1270,29 @@ void requestCameraCommand(NetworkOp op, const char* vaultId) {
   msg.reqVault[0] = (vaultId != NULL) ? vaultId[0] : '\0';
   msg.reqVault[1] = '\0';
   msg.reqOtp[0] = '\0';
+  msg.reqEvent[0] = '\0';
   msg.resultCode = 0;
   msg.resultBody[0] = '\0';
   if (xQueueSend(netReqQueue, &msg, 0) != pdPASS) {
     Serial.println("Network queue full - camera command dropped");
+  }
+}
+
+// Fire-and-forget delivery stage event to /api/device-event. Enqueued to the
+// network task exactly like camera commands and OTP verification so the main
+// loop never blocks on the POST.
+void requestEventReport(const char* event, const char* vaultId) {
+  NetMsg msg;
+  msg.op = OP_REPORT_EVENT;
+  msg.reqVault[0] = (vaultId != NULL) ? vaultId[0] : '\0';
+  msg.reqVault[1] = '\0';
+  strncpy(msg.reqEvent, event, sizeof(msg.reqEvent) - 1);
+  msg.reqEvent[sizeof(msg.reqEvent) - 1] = '\0';
+  msg.reqOtp[0] = '\0';
+  msg.resultCode = 0;
+  msg.resultBody[0] = '\0';
+  if (xQueueSend(netReqQueue, &msg, 0) != pdPASS) {
+    Serial.println("Network queue full - event report dropped");
   }
 }
 
@@ -1299,6 +1330,40 @@ void sendCameraCommandInternal(const char* command, const char* vaultId) {
   Serial.print("Camera command ");
   Serial.print(command);
   Serial.print(" -> HTTP ");
+  Serial.println(httpCode);
+
+  http.end();
+}
+
+void sendEventInternal(const char* event, const char* vaultId) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Event report skipped: no WiFi");
+    return;
+  }
+
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  HTTPClient http;
+  http.setTimeout(5000);
+
+  if (!http.begin(client, EVENT_FUNCTION_URL)) {
+    Serial.println("Event report: HTTP begin failed");
+    return;
+  }
+
+  http.addHeader("Content-Type", "application/json");
+
+  StaticJsonDocument<256> reqDoc;
+  reqDoc["deviceId"] = DEVICE_ID;
+  reqDoc["vaultId"] = vaultId;
+  reqDoc["event"] = event;
+  char requestBody[256];
+  serializeJson(reqDoc, requestBody, sizeof(requestBody));
+
+  Serial.print("Event report: "); Serial.println(requestBody);
+  int httpCode = http.POST(requestBody);
+  Serial.print("Event report -> HTTP ");
   Serial.println(httpCode);
 
   http.end();
@@ -1424,6 +1489,8 @@ void handleResponse(int httpCode, const char* responseBody) {
 #if ENABLE_SOLENOID_LOCKS
     unlockVault(vaultIndexFromId(selectedVault));
 #endif
+    // Start the delivery session on the server (opens deliveryInProgress).
+    requestEventReport("session_start", selectedVault);
     Serial.println("OTP Verified!");
   } else if (httpCode == 429) {
     lockoutUntilMs = millis() + LOCAL_LOCKOUT_MS;

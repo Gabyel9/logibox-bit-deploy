@@ -44,6 +44,16 @@ function LockerSimulator() {
     return () => unsubscribe();
   }, [user]);
 
+  // Keep the visual door open while a delivery session is pending, so a
+  // reload mid-session doesn't reset the simulated hardware to 'closed'.
+  useEffect(() => {
+    vaults.forEach(v => {
+      if (v.deliveryInProgress && !v.parcelConfirmed && doorState[v.id] !== 'open') {
+        setDoorState(prev => ({ ...prev, [v.id]: 'open' }));
+      }
+    });
+  }, [vaults, doorState]);
+
   const handleLogout = () => {
     logout();
     navigate('/signin');
@@ -53,6 +63,8 @@ function LockerSimulator() {
     if (vaultAnimations[vault.id] === 'opening') return 'opening';
     if (vaultAnimations[vault.id] === 'shake') return 'shake';
     if (vaultAnimations[vault.id] === 'open') return 'open';
+    if (doorState[vault.id] === 'opening') return 'opening';
+    if (doorState[vault.id] === 'open') return 'open';
     if (vault.otpStatus === 'expired') return 'expired';
     if (vault.otpStatus === 'active') return 'active';
     if (vault.status === 'occupied') return 'occupied';
@@ -71,7 +83,7 @@ function LockerSimulator() {
       expired: { door: '#fee2e2', light: '#ef4444', label: 'OTP Expired', doorTint: '#fef2f2' },
       occupied: { door: '#ede9fe', light: '#7c3aed', label: 'Occupied', doorTint: '#f5f3ff' },
       opening: { door: '#d1fae5', light: '#059669', label: 'Opening...', doorTint: '#ecfdf5' },
-      open: { door: '#d1fae5', light: '#059669', label: 'Opening...', doorTint: '#ecfdf5' },
+      open: { door: '#d1fae5', light: '#059669', label: 'Open', doorTint: '#ecfdf5' },
       shake: { door: '#fee2e2', light: '#ef4444', label: 'Try Again', doorTint: '#fef2f2' },
     };
 
@@ -93,6 +105,7 @@ function LockerSimulator() {
 
   const selectedVaultData = vaults.find(v => v.id === selectedVault);
   const isVaultOccupied = selectedVaultData?.status === 'occupied';
+  const isDeliveryInProgress = selectedVaultData?.deliveryInProgress && !selectedVaultData?.parcelConfirmed;
 
   const handleVerifyOTP = async () => {
     if (!otpInput || otpInput.length !== 6) {
@@ -137,57 +150,76 @@ function LockerSimulator() {
         return;
       }
 
-      // Animation sequence: door open -> door close -> cash dispense -> write occupied
-      // 0ms: door open
+      // 3-stage delivery flow: open door -> place parcel -> close & lock.
+      // The vault only becomes 'occupied' once the parcel is confirmed and
+      // the door is closed (see handleCloseDoor below). Verification just
+      // opens the door and records deliveryInProgress.
       setDoorState(prev => ({ ...prev, [selectedVault]: 'opening' }));
       triggerAnimation(selectedVault, 'opening', 600);
 
-      // 1200ms: door close
+      await setDoc(vaultDocRef, {
+        deliveryInProgress: true,
+        parcelConfirmed: false,
+        otpHash: null,
+        otpEncrypted: null,
+        otpStatus: null,
+        otpCreatedAt: null,
+        otpExpiresAt: null,
+        lastOtpGeneratedAt: null,
+      }, { merge: true });
+
+      await addDoc(collection(db, 'users', user.uid, 'activityLogs'), {
+        action: 'Delivery Session Started (Simulator)',
+        details: `Vault ${selectedVault} opened by rider — place parcel and close door`,
+        vaultId: selectedVault,
+        timestamp: serverTimestamp(),
+      });
+
       setTimeout(() => {
-        setDoorState(prev => ({ ...prev, [selectedVault]: 'closing' }));
-      }, 1200);
-
-      // 2000ms: cash dispense
-      setTimeout(() => {
-        setCashDispensing(prev => ({ ...prev, [selectedVault]: true }));
-      }, 2000);
-
-      // 3000ms: write occupied status
-      setTimeout(async () => {
-        await setDoc(vaultDocRef, {
-          status: 'occupied',
-          otpHash: null,
-          otpEncrypted: null,
-          otpStatus: null,
-          otpCreatedAt: null,
-          otpExpiresAt: null,
-          lastOtpGeneratedAt: null,
-        }, { merge: true });
-
-        await addDoc(collection(db, 'users', user.uid, 'activityLogs'), {
-          action: 'OTP Verified (Simulator)',
-          details: `Vault ${selectedVault} opened by rider — parcel deposited`,
-          vaultId: selectedVault,
-          timestamp: serverTimestamp(),
-        });
-
-        setResult({ type: 'success', message: `Parcel deposited — Vault ${selectedVault} is now occupied` });
-        setDoorState(prev => ({ ...prev, [selectedVault]: 'closed' }));
-      }, 3000);
-
-      // 3500ms: clear OTP input
-      setTimeout(() => {
-        setOtpInput('');
-      }, 3500);
-
-      // 3500ms: stop cash dispensing
-      setTimeout(() => {
-        setCashDispensing(prev => ({ ...prev, [selectedVault]: false }));
-      }, 3500);
+        setDoorState(prev => ({ ...prev, [selectedVault]: 'open' }));
+        setResult({ type: 'success', message: `Vault ${selectedVault} open — place the parcel inside, then close the door to lock it in` });
+      }, 650);
 
     } catch (err) {
       console.error('Verification error:', err);
       setResult({ type: 'error', message: 'Verification failed: ' + err.message });
+    }
+  };
+
+  const handleCloseDoor = async () => {
+    if (!user || !isDeliveryInProgress) return;
+
+    const vaultDocRef = doc(db, 'users', user.uid, 'vaults', selectedVault.toString());
+    setDoorState(prev => ({ ...prev, [selectedVault]: 'closing' }));
+    setCashDispensing(prev => ({ ...prev, [selectedVault]: true }));
+
+    try {
+      // Stage 3: parcel confirmed, door closed — the vault is now occupied.
+      await setDoc(vaultDocRef, {
+        status: 'occupied',
+        deliveryInProgress: false,
+        parcelConfirmed: true,
+        lockedAt: new Date().toISOString(),
+      }, { merge: true });
+
+      await addDoc(collection(db, 'users', user.uid, 'activityLogs'), {
+        action: 'Delivery Locked In (Simulator)',
+        details: `Vault ${selectedVault} closed with parcel — marked occupied`,
+        vaultId: selectedVault,
+        timestamp: serverTimestamp(),
+      });
+
+      setTimeout(() => {
+        setDoorState(prev => ({ ...prev, [selectedVault]: 'closed' }));
+        setCashDispensing(prev => ({ ...prev, [selectedVault]: false }));
+        setOtpInput('');
+        setResult({ type: 'success', message: `Parcel deposited — Vault ${selectedVault} is now occupied` });
+      }, 800);
+    } catch (err) {
+      console.error('Close door error:', err);
+      setDoorState(prev => ({ ...prev, [selectedVault]: 'open' }));
+      setCashDispensing(prev => ({ ...prev, [selectedVault]: false }));
+      setResult({ type: 'error', message: 'Failed to lock vault: ' + err.message });
     }
   };
 
@@ -197,9 +229,11 @@ function LockerSimulator() {
     const isClosing = doorState[vault.id] === 'closing';
     const isShake = state === 'shake';
     const isDispensing = cashDispensing[vault.id];
+    const isHeldOpen = doorState[vault.id] === 'open';
 
     let doorTransform = 'perspective(400px) rotateY(0deg)';
     if (isOpening) doorTransform = 'perspective(400px) rotateY(-110deg)';
+    else if (isHeldOpen) doorTransform = 'perspective(400px) rotateY(-110deg)';
     else if (isClosing) doorTransform = 'perspective(400px) rotateY(0deg)';
 
     return (
@@ -305,19 +339,36 @@ function LockerSimulator() {
                 <div key={vault.id} style={styles.vaultCard}>
                   <div style={styles.vaultCardHeader}>
                     <span style={styles.vaultCardNumber}>Vault {vault.id}</span>
-                    <span style={{
-                      ...styles.vaultCardBadge,
-                      backgroundColor: vault.status === 'empty' ? '#e5e7eb' : vault.status === 'completed' ? '#d1fae5' : vault.status === 'occupied' ? '#ede9fe' : '#fef3c7',
-                      color: vault.status === 'empty' ? '#6b7280' : vault.status === 'completed' ? '#059669' : vault.status === 'occupied' ? '#7c3aed' : '#92400e',
-                    }}>
-                      {vault.status === 'empty' ? 'Empty' : vault.status === 'completed' ? 'Completed' : vault.status === 'occupied' ? 'Occupied' : vault.status}
-                    </span>
+<span style={{
+                        ...styles.vaultCardBadge,
+                        backgroundColor: vault.deliveryInProgress && !vault.parcelConfirmed
+                          ? '#fffbeb'
+                          : vault.status === 'empty' ? '#e5e7eb' : vault.status === 'completed' ? '#d1fae5' : vault.status === 'occupied' ? '#ede9fe' : '#fef3c7',
+                        color: vault.deliveryInProgress && !vault.parcelConfirmed
+                          ? '#d97706'
+                          : vault.status === 'empty' ? '#6b7280' : vault.status === 'completed' ? '#059669' : vault.status === 'occupied' ? '#7c3aed' : '#92400e',
+                      }}>
+                        {vault.deliveryInProgress && !vault.parcelConfirmed
+                          ? 'In Progress'
+                          : vault.status === 'empty' ? 'Empty' : vault.status === 'completed' ? 'Completed' : vault.status === 'occupied' ? 'Occupied' : vault.status}
+                      </span>
                   </div>
                   <div style={styles.vaultCardDetails}>
                     {vault.receiverName && (
                       <div style={styles.vaultCardRow}>
                         <span style={styles.vaultCardLabel}>Receiver:</span>
                         <span style={styles.vaultCardValue}>{vault.receiverName}</span>
+                      </div>
+                    )}
+                    {(vault.deliveryInProgress || vault.parcelConfirmed) && (
+                      <div style={styles.vaultCardRow}>
+                        <span style={styles.vaultCardLabel}>Delivery:</span>
+                        <span style={{
+                          ...styles.vaultCardValue,
+                          color: vault.parcelConfirmed ? '#059669' : '#d97706',
+                        }}>
+                          {vault.parcelConfirmed ? 'Parcel inside' : 'In progress'}
+                        </span>
                       </div>
                     )}
                     <div style={styles.vaultCardRow}>
@@ -375,6 +426,29 @@ function LockerSimulator() {
                 }}>
                   Vault {selectedVault} is occupied — waiting for admin to confirm delivery
                 </div>
+              ) : isDeliveryInProgress ? (
+                <>
+                  <div style={{
+                    backgroundColor: '#fffbeb',
+                    border: '1px solid #fcd34d',
+                    borderRadius: '10px',
+                    padding: '1rem',
+                    textAlign: 'center',
+                    color: '#92400e',
+                    fontWeight: 700,
+                    fontSize: '0.875rem',
+                    marginBottom: '1rem',
+                  }}>
+                    Vault {selectedVault} is open — place the parcel inside, then close the door to lock it in.
+                  </div>
+
+                  <button
+                    style={styles.closeDoorBtn}
+                    onClick={handleCloseDoor}
+                  >
+                    Place Parcel &amp; Close Door
+                  </button>
+                </>
               ) : (
                 <>
                   <div style={styles.formGroup}>
@@ -651,6 +725,19 @@ const styles = {
     minHeight: '44px',
     fontFamily: 'var(--font)',
     marginTop: '0.5rem',
+  },
+  closeDoorBtn: {
+    width: '100%',
+    padding: '0.75rem',
+    backgroundColor: '#059669',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '10px',
+    fontSize: '1rem',
+    fontWeight: 700,
+    cursor: 'pointer',
+    minHeight: '44px',
+    fontFamily: 'var(--font)',
   },
   resultBox: {
     borderRadius: '10px',

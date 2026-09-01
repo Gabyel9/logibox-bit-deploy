@@ -733,12 +733,23 @@ function Dashboard() {
                           <span style={styles.vaultDot} />
                           <span style={styles.vaultNumber}>Vault {vault.id}</span>
                         </div>
-                        <span style={{
-                          ...styles.vaultBadge,
-                          backgroundColor: vault.status === 'empty' ? '#e5e7eb' : vault.status === 'completed' ? '#d1fae5' : vault.status === 'assigned' ? '#fee2e2' : vault.status === 'occupied' ? '#ede9fe' : '#e5e7eb',
-                          color: vault.status === 'empty' ? '#6b7280' : vault.status === 'completed' ? '#059669' : vault.status === 'assigned' ? '#8B0000' : vault.status === 'occupied' ? '#7c3aed' : '#6b7280',
-                        }}>
-                          {vault.status === 'empty' ? 'Empty' : vault.status === 'completed' ? 'Completed' : vault.status === 'assigned' ? 'Assigned' : vault.status === 'occupied' ? 'Occupied' : 'Unknown'}
+                        <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <span style={{
+                            ...styles.vaultBadge,
+                            backgroundColor: vault.status === 'empty' ? '#e5e7eb' : vault.status === 'completed' ? '#d1fae5' : vault.status === 'assigned' ? '#fee2e2' : vault.status === 'occupied' ? '#ede9fe' : '#e5e7eb',
+                            color: vault.status === 'empty' ? '#6b7280' : vault.status === 'completed' ? '#059669' : vault.status === 'assigned' ? '#8B0000' : vault.status === 'occupied' ? '#7c3aed' : '#6b7280',
+                          }}>
+                            {vault.status === 'empty' ? 'Empty' : vault.status === 'completed' ? 'Completed' : vault.status === 'assigned' ? 'Assigned' : vault.status === 'occupied' ? 'Occupied' : 'Unknown'}
+                          </span>
+                          {vault.deliveryInProgress && (
+                            <span style={{
+                              ...styles.vaultBadge,
+                              backgroundColor: vault.parcelConfirmed ? '#d1fae5' : '#fffbeb',
+                              color: vault.parcelConfirmed ? '#059669' : '#d97706',
+                            }}>
+                              {vault.parcelConfirmed ? 'Parcel confirmed' : 'Delivery in progress'}
+                            </span>
+                          )}
                         </span>
                       </div>
 

@@ -29,13 +29,15 @@ enum NetworkOp {
   OP_START_CAMERA,
   OP_STOP_CAMERA,
   OP_VERIFY_OTP,
-  OP_LOG_TAMPER
+  OP_LOG_TAMPER,
+  OP_REPORT_EVENT
 };
 
 typedef struct {
   NetworkOp op;
   char reqVault[2];
   char reqOtp[7];
+  char reqEvent[24];
   int  resultCode;
   char resultBody[512];
 } NetMsg;

@@ -9,6 +9,7 @@
 // ─── Device Identity ───
 #define DEVICE_ID      "esp32-test-001"
 #define FUNCTION_URL   "https://logibox-bit-deploy-3xzd.vercel.app/api/device-verify-otp"
+#define EVENT_FUNCTION_URL "https://logibox-bit-deploy-3xzd.vercel.app/api/device-event"
 
 // ─── Vaults ───
 #define NUM_VAULTS     3

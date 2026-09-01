@@ -266,7 +266,9 @@ export default async (req, res) => {
       return res.status(403).json({ success: false, message: 'Invalid OTP' });
     }
 
-    // STEP 7 — Success: mark OTP as used and update vault status
+    // STEP 7 — Success: mark OTP as used and start the delivery session
+    // The vault is NOT yet occupied: it only becomes 'occupied' when the
+    // device reports parcel_placed + door_closed_locked via /api/device-event.
     // Clear device rate limit on successful verification
     await clearDeviceRateLimit(deviceId);
 
@@ -274,12 +276,13 @@ export default async (req, res) => {
       otpStatus: 'used',
       otpHash: null,
       otpEncrypted: null,
-      status: 'occupied', // Mark vault as occupied when OTP is used
+      deliveryInProgress: true,
+      parcelConfirmed: false,
     });
 
     // Log successful verification
     await db.collection(`users/${ownerUid}/activityLogs`).add({
-      action: 'Delivery Confirmed',
+      action: 'Delivery Session Started',
       details: `Vault ${vaultId} opened via device ${deviceId}`,
       vaultId: parseInt(vaultId),
       timestamp: new Date(),
