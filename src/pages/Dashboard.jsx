@@ -333,6 +333,32 @@ function Dashboard() {
     return () => clearInterval(interval);
   }, [user, vaults, logActivity]);
 
+  // Self-healing watchdog: any vault sitting in 'completed' for more than a
+  // couple of seconds auto-resets to 'empty', retrying once if the first
+  // attempt fails. Survives page reloads and covers failures from the old
+  // fire-and-forget confirm timer.
+  useEffect(() => {
+    if (!user || vaults.length === 0) return;
+
+    const completedVaults = vaults.filter(v => v.status === 'completed');
+    if (completedVaults.length === 0) return;
+
+    const timer = setTimeout(() => {
+      completedVaults.forEach(v => {
+        handleResetVault(v.id).catch(err => {
+          console.error('Auto-reset failed for vault', v.id, err);
+          setTimeout(() => {
+            handleResetVault(v.id).catch(err2 => {
+              console.error('Auto-reset retry failed for vault', v.id, err2);
+            });
+          }, 3000);
+        });
+      });
+    }, 2000);
+
+    return () => clearTimeout(timer);
+  }, [user, vaults, handleResetVault]);
+
   useEffect(() => {
     if (!user || vaults.length === 0) return;
     const activeVaults = vaults.filter(v => v.otpStatus === 'active' && v.otpExpiresAt);
@@ -507,10 +533,20 @@ function Dashboard() {
     setConfirmLoading(true);
     setConfirmError(null);
 
+    // Normalize the vault: clear leftover OTP fields so a confirmed delivery
+    // can't leave a hybrid status/otpStatus behind. Recovery back to 'empty'
+    // is handled by the completed-vault watchdog effect.
     const updatedVault = cleanVaultForFirestore({
       ...selectedVault,
       status: 'completed',
       completedAt: new Date().toISOString(),
+      otp: null,
+      otpHash: null,
+      otpEncrypted: null,
+      otpStatus: null,
+      otpCreatedAt: null,
+      otpExpiresAt: null,
+      lastOtpGeneratedAt: null,
     });
 
     try {
@@ -519,13 +555,16 @@ function Dashboard() {
         updatedVault
       );
 
-      await logActivity(
-        'Delivery Confirmed',
-        `Delivery confirmed for vault ${selectedVault.id}`,
-        selectedVault.id
-      );
-
-      setTimeout(() => handleResetVault(selectedVault.id), 1500);
+      // Activity logging must never block vault recovery.
+      try {
+        await logActivity(
+          'Delivery Confirmed',
+          `Delivery confirmed for vault ${selectedVault.id}`,
+          selectedVault.id
+        );
+      } catch (logError) {
+        console.error('Activity log write failed:', logError);
+      }
     } catch (error) {
       console.error('Confirm delivery failed:', error);
       setConfirmError('Failed to confirm delivery. Please try again.');
@@ -952,6 +991,13 @@ function Dashboard() {
                               <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
                             </svg>
                             <p style={styles.completedText}>Delivery completed</p>
+                            <button
+                              className="btn-animate"
+                              style={{ ...styles.resetVaultBtn, minHeight: 44, marginTop: '1rem' }}
+                              onClick={() => handleResetVault(vault.id)}
+                            >
+                              Reset
+                            </button>
                           </div>
                         </div>
                       )}
