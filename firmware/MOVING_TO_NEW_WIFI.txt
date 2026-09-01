@@ -1,0 +1,107 @@
+================================================================================
+                   LOGIBOX - MOVING TO A NEW WIFI NETWORK
+================================================================================
+
+Use this guide when you move the LogiBox hardware to a new location and need
+to connect it to a different WiFi network (another router, a site's network,
+or a phone hotspot).
+
+  - No code edits are needed.
+  - No re-flashing is needed.
+  - Each device remembers its WiFi only until it cannot reach it.
+
+How this works
+--------------
+WiFi credentials are stored per device in NVS memory via the WiFiManager
+portal. The setup portal only appears when a device CANNOT reach its saved
+network. So the trick is simple: make the OLD network unavailable, power-cycle
+the device, and the portal starts by itself.
+
+The two devices are:
+  - ESP32-CAM     -> portal AP name "LogiBoxCam"
+  - Keypad (LCD)  -> portal AP name "LogiBoxKeypad"
+
+WHAT YOU NEED
+-------------
+  [ ] The device(s)
+  [ ] A phone (for the setup portal)
+  [ ] The new WiFi network name (SSID) and password
+  [ ] Access to turn off the old WiFi (or move out of its range)
+
+
+STEP 1 - DISABLE THE OLD NETWORK
+--------------------------------
+  - Turn OFF the old router / hotspot that the devices are currently using.
+    (Or move the hardware out of range of it.)
+  - If the device still sees its old saved network, it will just reconnect to
+    it and the portal will never appear.
+
+
+STEP 2 - SET UP THE ESP32-CAM FIRST
+-----------------------------------
+  1. Power-cycle the ESP32-CAM (unplug / replug, or press reset).
+  2. It tries its saved network, fails, and starts a portal hotspot:
+       AP name: "LogiBoxCam"   (no password)
+  3. On your phone:
+       a. Turn OFF your phone's own hotspot/portable WiFi hotspot.
+          (A phone cannot be connected to its own hotspot at the same time.)
+       b. Open Settings -> WiFi and join the network "LogiBoxCam".
+       c. Open a browser and go to:  http://192.168.4.1
+  4. In the portal:
+       a. Pick your new WiFi network from the list.
+       b. If it is NOT in the list (common with phone hotspots), use the
+          "manual configuration" option and type the SSID and password.
+       c. Save / Connect.
+  5. The device reboots and connects to the new network.
+  6. Watch the Serial Monitor (115200 baud) - you should see:
+       WiFi connected! IP: 192.168.x.x
+       mDNS started: logiboxcam.local
+
+
+STEP 3 - SET UP THE KEYPAD SECOND
+---------------------------------
+  1. Power-cycle the keypad.
+  2. The LCD shows:  "Join WiFi:" / "LogiBoxKeypad"
+  3. On your phone repeat step 3 above using the AP name "LogiBoxKeypad".
+  4. After saving, the keypad connects to the SAME new network as the camera.
+  5. The LCD shows "WiFi Connected".
+
+  IMPORTANT: BOTH devices MUST be on the SAME network so the keypad can find
+  the camera by mDNS (hostname "logiboxcam").
+
+
+STEP 4 - VERIFY IT WORKS
+------------------------
+  1. Confirm both devices are on the new network (serial shows their IPs).
+  2. Test the camera alone: on a device on the new network, open
+       http://<camera IP from serial>/status
+     You should see:  {"capturing":false,...}
+  3. On the keypad, press any key. The keypad serial should show:
+       mDNS resolved logiboxcam -> 192.168.x.x
+       Camera command start -> HTTP 200
+  4. The web app's Camera page should show a new Captured Session with frames.
+
+
+PHONE HOTSPOT GOTCHAS
+---------------------
+  - Turn the phone's OWN hotspot OFF while you run the setup portal. Turn it
+    back on AFTER the device reboots and tries to join it.
+  - The hotspot's SSID often does NOT appear in the portal's scan list while
+    it is off - type it manually.
+  - 2.4 GHz ONLY: the ESP32-CAM cannot join 5 GHz networks. If your hotspot
+    broadcasts both bands, make sure the 2.4 GHz band is enabled, otherwise
+    the camera will never connect.
+  - A phone hotspot usually supports only a few connected devices - keep in
+    mind the camera and keypad are two of them.
+
+
+SWITCHING BACK OR MOVING AGAIN
+------------------------------
+  Same process every time:
+    1. Disable the network the devices are currently on.
+    2. Power-cycle the device(s).
+    3. Portal appears -> join it from a phone -> enter the new WiFi.
+  No laptop, no code changes, no re-flash. Credentials survive re-flashes
+  (they are in NVS), so only change them when you actually move networks.
+
+================================================================================
