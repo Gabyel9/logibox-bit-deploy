@@ -235,6 +235,7 @@ export default async (req, res) => {
 
     // STEP 4 — Check OTP status is active
     if (vault.otpStatus !== 'active') {
+      await recordDeviceFailedAttempt(deviceId);
       return res.status(400).json({ success: false, message: 'OTP is not active' });
     }
 
@@ -243,6 +244,7 @@ export default async (req, res) => {
     const expiresAt = new Date(vault.otpExpiresAt).getTime();
 
     if (now >= expiresAt) {
+      await recordDeviceFailedAttempt(deviceId);
       await vaultRef.update({ otpStatus: 'expired' });
       return res.status(400).json({ success: false, message: 'OTP has expired' });
     }

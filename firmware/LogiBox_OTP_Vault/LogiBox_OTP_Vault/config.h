@@ -30,12 +30,17 @@
 
 // ─── Reed Switches (vault doors) ───
 // Closed door = LOW, open door = HIGH (INPUT_PULLUP, wire to GND)
-#define REED_PIN_V1  25
-#define REED_PIN_V2  26
+#define REED_PIN_V1  33
+#define REED_PIN_V2  19
 #define REED_PIN_V3  27
 
 // ─── IR Sensors (parcel detection) ───
 // Parcel present = LOW, empty = HIGH (LM393 push-pull, 3.3V supply)
+// IR_PIN_V1/V2/V3 = GPIO34/35/36 are INPUT-ONLY on ESP32 (no internal
+// pull-up/pull-down). Any replacement IR module MUST be genuine push-pull
+// output (e.g. LM393 comparator); open-collector/drain modules will FLOAT
+// the line and read randomly. Do not add INPUT_PULLUP — it will not work
+// on these pins.
 #define IR_PIN_V1  34
 #define IR_PIN_V2  35
 #define IR_PIN_V3  36
@@ -48,9 +53,13 @@
 #define RELAY_ACTIVE_LOW       1
 
 #define RELAY_PIN_V1           32
-#define RELAY_PIN_V2           33
-#define RELAY_PIN_V3           19
-#define RELAY_PIN_SPARE        23   // channel 4, unused
+#define RELAY_PIN_V2           25
+#define RELAY_PIN_V3           26
+// RELAY_PINS hardware reminder (not enforceable in software): (1) fit a
+// flyback/suppression diode across each relay coil (or use a relay module
+// that already has one) to clamp back-EMF; (2) verify a COMMON GROUND
+// between the ESP32, the relay board supply, and the IR/sensor supplies —
+// floating grounds plus inductive coils is a classic reset/corruption source.
 
 // Failsafe: force re-lock this long after an unlock even if the door
 // never reports closed. Also caps how long an open door stays unlocked.

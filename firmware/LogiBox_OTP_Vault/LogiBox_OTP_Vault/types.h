@@ -20,6 +20,7 @@ struct ParcelState {
 struct LockState {
   bool unlocked;
   bool doorOpenedDuringUnlock;
+  bool parcelDetectedDuringUnlock;
   unsigned long unlockedAt;
 };
 

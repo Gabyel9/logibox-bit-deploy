@@ -54,8 +54,8 @@ WIRING (ESP32 38-pin DevKit, CP2102)
   LCD (I2C)     -> SDA GPIO 21, SCL GPIO 22, 5V, GND  (address 0x27)
 
   Reed Switches (when ready to wire):
-    Reed V1     -> GPIO 25  (other leg to GND)
-    Reed V2     -> GPIO 26  (other leg to GND)
+    Reed V1     -> GPIO 33  (other leg to GND)
+    Reed V2     -> GPIO 19  (other leg to GND)
     Reed V3     -> GPIO 27  (other leg to GND)
     Note: Uses internal INPUT_PULLUP. Closed door = LOW, open door = HIGH.
 
@@ -69,9 +69,8 @@ WIRING (ESP32 38-pin DevKit, CP2102)
 
   Relay Module - control side (low voltage):
     Relay IN1   -> GPIO 32  (Vault 1 lock)
-    Relay IN2   -> GPIO 33  (Vault 2 lock)
-    Relay IN3   -> GPIO 19  (Vault 3 lock)
-    Relay IN4   -> GPIO 23  (spare channel, unused)
+    Relay IN2   -> GPIO 25  (Vault 2 lock)
+    Relay IN3   -> GPIO 26  (Vault 3 lock)
     Relay VCC   -> ESP32 5V/VIN pin (powers relay coils; NOT the 3.3V pin)
     Relay GND   -> ESP32 GND
     Note: The firmware drives relays active-LOW (GPIO LOW = energized).
@@ -486,16 +485,15 @@ ESP32 #1 (Keypad/LCD) - 38-pin DevKit (CP2102):
   Keypad Col 4       GPIO 18     Working
   LCD SDA            GPIO 21     Working
   LCD SCL            GPIO 22     Working
-  Reed Switch V1     GPIO 25     Working
-  Reed Switch V2     GPIO 26     Working
+  Reed Switch V1     GPIO 33     Working
+  Reed Switch V2     GPIO 19     Working
   Reed Switch V3     GPIO 27     Working
   IR Sensor V1       GPIO 34     Working (INPUT ONLY)
   IR Sensor V2       GPIO 35     Working (INPUT ONLY)
   IR Sensor V3       GPIO 36     Working (INPUT ONLY)
   Relay IN1 (Lock1)  GPIO 32     Wired, bench test pending
-  Relay IN2 (Lock2)  GPIO 33     Wired, bench test pending
-  Relay IN3 (Lock3)  GPIO 19     Wired, bench test pending
-  Relay IN4 (spare)  GPIO 23     Defined, unused
+  Relay IN2 (Lock2)  GPIO 25     Wired, bench test pending
+  Relay IN3 (Lock3)  GPIO 26     Wired, bench test pending
 
   Free output pins (available for future use):
     GPIO 2   (strapping - must be HIGH at boot)

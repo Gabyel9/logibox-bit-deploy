@@ -74,6 +74,11 @@ char keys[KEYPAD_ROWS][KEYPAD_COLS] = {
   {'A','B','C','D'}
 };
 byte rowPins[KEYPAD_ROWS] = {4, 5, 14, 13};
+// KEYPAD_COLS starts at GPIO15 (MTDO), an ESP32 boot-strapping pin with a
+// boot-time pull-DOWN. It must NOT be pulled HIGH at reset (that can select
+// a different boot mode). The keypad's column drive on this pin is the
+// riskiest of the set — confirm the column wiring does not assert HIGH during
+// power-on reset.
 byte colPins[KEYPAD_COLS] = {15, 16, 17, 18};
 Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, KEYPAD_ROWS, KEYPAD_COLS);
 
@@ -98,7 +103,7 @@ const byte RELAY_OFF_LEVEL = HIGH;
 const byte RELAY_ON_LEVEL  = HIGH;
 const byte RELAY_OFF_LEVEL = LOW;
 #endif
-LockState locks[NUM_VAULTS] = {{false, false, 0}, {false, false, 0}, {false, false, 0}};
+LockState locks[NUM_VAULTS] = {{false, false, false, 0}, {false, false, false, 0}, {false, false, false, 0}};
 #endif
 
 // ---------------- NVS Persistence ----------------
@@ -116,6 +121,10 @@ unsigned long lastKeyTime = 0;
 unsigned long lastActivityTime = 0;
 unsigned long resultShownAt = 0;
 unsigned long verifyStartedAt = 0;
+
+// Live "Verifying..." progress indicator (non-blocking)
+bool verifyBlinkOn = false;
+unsigned long lastVerifyBlink = 0;
 
 // Local lockout
 int localFailCount = 0;
@@ -382,6 +391,7 @@ void loop() {
   checkNetworkResults();
   checkFlashMessage();
   updateScrolling();
+  updateVerifyingScreen();
 #if ENABLE_SOLENOID_LOCKS
   checkLockStates();
 #endif
@@ -506,6 +516,13 @@ void handleKeyPress(char key) {
       break;
 
     case DOOR_UNLOCKED:
+      // INVARIANT: at most ONE vault is unlocked at a time. This keypad
+      // block is the SOLE enforcement point. firstUnlockedVaultIndex()
+      // (which assumes single-unlock) and the RESULT->DOOR_UNLOCKED handoff
+      // in checkIdleTimeout() BOTH rely on it. If you relax this block to
+      // allow a second vault, you must also rework firstUnlockedVaultIndex()
+      // plus showDoorUnlockedScreen()/updateDoorUnlockedPrompt() (which key
+      // off the single global selectedVault).
       // Keys are ignored while the door is released; re-locking is driven
       // by checkLockStates() (door close or failsafe timeout).
       break;
@@ -533,6 +550,11 @@ void handleSelectVaultKey(char key) {
 // ENTER_OTP screen keys
 void handleEnterOtpKey(char key) {
   if (key == '*') {
+    // Close the camera session started at vault selection (asymmetry fix).
+    requestCameraCommand(OP_STOP_CAMERA, "");
+    // Clear any half-typed OTP so leftover digits don't carry over if the
+    // same vault is re-picked and a new OTP is submitted.
+    otpInput[0] = '\0';
     showScreen(SELECT_VAULT);
   } else if (key == 'D') {
     int len = strlen(otpInput);
@@ -748,6 +770,24 @@ void showVerifyingScreen() {
   lcd.setCursor(0, 1);
   lcd.print("Vault ");
   lcd.print(selectedVault);
+  verifyBlinkOn = false;
+  lastVerifyBlink = millis();
+}
+
+// Non-blocking live progress indicator while VERIFYING: blinks a dot group in
+// the free columns of row 0 (cols 12-15, clear of "Verifying..." which spans
+// cols 0-11) so the user can see the device is working during the network
+// wait. Called every loop().
+void updateVerifyingScreen() {
+  if (currentState != VERIFYING) return;
+  unsigned long now = millis();
+  if (now - lastVerifyBlink < VERIFY_PROGRESS_BLINK_MS) return;
+  lastVerifyBlink = now;
+  verifyBlinkOn = !verifyBlinkOn;
+  lcd.setCursor(12, 0);
+  lcd.print("    ");
+  lcd.setCursor(12, 0);
+  lcd.print(verifyBlinkOn ? "...." : "    ");
 }
 
 void showResultScreen() {
@@ -766,16 +806,31 @@ void showResultScreen() {
     
     if (strstr(lastResultMessage, "not authorized") != NULL) {
       strcpy(line0, "Not authorized");
-      snprintf(line1, sizeof(line1), "for Vault %s", lastResultVault);
+      // Actionable: this OTP wasn't valid for this vault — tell the user to
+      // re-enter (vault number preserved on the line for context).
+      snprintf(line1, sizeof(line1), "Vault %s re-enter", lastResultVault);
     } else if (strstr(lastResultMessage, "Invalid OTP") != NULL) {
       strcpy(line0, "ACCESS DENIED");
-      snprintf(line1, sizeof(line1), "Vault %s - bad OTP", lastResultVault);
+      // Actionable: bad credentials — tell the user to re-enter.
+      snprintf(line1, sizeof(line1), "Vault %s re-enter", lastResultVault);
     } else if (strstr(lastResultMessage, "Too many") != NULL) {
       snprintf(line0, sizeof(line0), "Vault %s -", lastResultVault);
+      // 429 already states the wait — leave as-is, no extra action needed.
       strncpy(line1, lastResultMessage, sizeof(line1) - 1);
     } else {
       snprintf(line0, sizeof(line0), "Vault %s", lastResultVault);
-      strncpy(line1, lastResultMessage, sizeof(line1) - 1);
+      // Transient network/server failures: tell the user to retry. Permanent
+      // errors (Bad request / Not registered / etc.) keep their message with
+      // no misleading "retry".
+      bool retryable = strstr(lastResultMessage, "No WiFi") != NULL
+                    || strstr(lastResultMessage, "Connect failed") != NULL
+                    || strstr(lastResultMessage, "Network error") != NULL
+                    || strstr(lastResultMessage, "Server error") != NULL;
+      if (retryable) {
+        snprintf(line1, sizeof(line1), "%s - retry", lastResultMessage);
+      } else {
+        strncpy(line1, lastResultMessage, sizeof(line1) - 1);
+      }
     }
     
     // Use scrolling for long messages
@@ -843,6 +898,13 @@ void onParcelChange(int vaultIndex) {
 #if ENABLE_SOLENOID_LOCKS
 
 void initRelays() {
+  // RELAY SAFETY (confirmed, no behavior change): writing RELAY_OFF_LEVEL
+  // BEFORE pinMode preloads the GPIO output register, so the pin does not
+  // glitch the instant it becomes an output (no output-register pulse),
+  // and writing it again AFTER confirms the level. The pre-init boot window
+  // (GPIOs floating hi-Z until this runs) is also safe: with RELAY_ACTIVE_LOW=1
+  // a floating/high pin reads as OFF (de-energized / fail-secure), so no
+  // relay can fire before initRelays() executes.
   // Write the inactive level BEFORE pinMode so the output register is
   // preloaded the instant the pin becomes an output (no glitch pulse).
   for (int i = 0; i < NUM_VAULTS; i++) {
@@ -856,6 +918,7 @@ void unlockVault(int vaultIndex) {
   if (vaultIndex < 0 || vaultIndex >= NUM_VAULTS) return;
   locks[vaultIndex].unlocked = true;
   locks[vaultIndex].doorOpenedDuringUnlock = false;
+  locks[vaultIndex].parcelDetectedDuringUnlock = false;
   locks[vaultIndex].unlockedAt = millis();
   digitalWrite(RELAY_PINS[vaultIndex], RELAY_ON_LEVEL);
   Serial.print("Vault ");
@@ -882,17 +945,28 @@ int vaultIndexFromId(const char* vaultId) {
 }
 
 int firstUnlockedVaultIndex() {
+  // Assumes at most ONE vault is ever unlocked at a time — the "return
+  // first" here is only correct because of the keypad block in
+  // handleKeyPress()'s DOOR_UNLOCKED case (single-vault-at-a-time).
+  // Do NOT remove that keypad block without also reworking this function,
+  // the RESULT->DOOR_UNLOCKED handoff in checkIdleTimeout(), and
+  // showDoorUnlockedScreen()/updateDoorUnlockedPrompt(), which key off the
+  // single global selectedVault.
   for (int i = 0; i < NUM_VAULTS; i++) {
     if (locks[i].unlocked) return i;
   }
   return -1;
 }
 
-// Re-lock policy: after a successful OTP the solenoid releases and waits
-// for the user to pull the door open (reed switch); once the door closes
-// again the lock re-engages automatically. The failsafe timeout forces a
-// re-lock even if the door never moves or is left open. Without reed
-// switches there is no door feedback, so a plain timed unlock is used.
+// Re-lock policy: after a successful OTP the solenoid releases and walks the
+// rider through a 3-stage sequence enforced by the sensors:
+//   1. Pull the door open (reed switch reports OPEN)
+//   2. Place the parcel inside (IR sensor reports PRESENT)
+//   3. Close the door (reed switch reports CLOSED) -> lock re-engages
+// If the door closes before a parcel was detected, the lock re-engages
+// immediately with a warning and the sequence must start over. The failsafe
+// timeout forces a re-lock even if the rider stalls at any stage. Without
+// reed switches there is no door feedback, so a plain timed unlock is used.
 void checkLockStates() {
   for (int i = 0; i < NUM_VAULTS; i++) {
     if (!locks[i].unlocked) continue;
@@ -903,14 +977,46 @@ void checkLockStates() {
 #if ENABLE_REED_SWITCHES
     bool doorOpen = !doors[i].closed;
 
+    // Stage 1: rider pulls the door open — record it and prompt to place
+    // the parcel.
     if (!locks[i].doorOpenedDuringUnlock && doorOpen) {
       locks[i].doorOpenedDuringUnlock = true;
       updateDoorUnlockedPrompt(i);
       continue;
     }
 
-    if (!timedOut && (!locks[i].doorOpenedDuringUnlock || doorOpen)) {
+    // Stage 2: with the door open, watch the IR sensor until a parcel is
+    // placed inside the vault, then tell the rider to close the door.
+#if ENABLE_IR_SENSORS
+    if (locks[i].doorOpenedDuringUnlock &&
+        !locks[i].parcelDetectedDuringUnlock &&
+        parcels[i].present) {
+      locks[i].parcelDetectedDuringUnlock = true;
+      updateDoorUnlockedPrompt(i);
       continue;
+    }
+#endif
+
+    // With IR sensors enabled, the close-door contract is only satisfied
+    // once a parcel has actually been detected inside the vault.
+    bool parcelOk = true;
+#if ENABLE_IR_SENSORS
+    parcelOk = locks[i].parcelDetectedDuringUnlock;
+#endif
+
+    if (!timedOut) {
+      if (doorOpen) continue;                        // still holding the door open
+      if (!locks[i].doorOpenedDuringUnlock) continue; // door was never opened
+      if (!parcelOk) {
+        // Door closed before a parcel was detected — relock and warn the
+        // rider so they restart the delivery sequence.
+        relockVault(i);
+        if (currentState == DOOR_UNLOCKED) {
+          lastActivityTime = millis();
+          flashLine("No parcel detected", 1500, SELECT_VAULT);
+        }
+        continue;
+      }
     }
 
     relockVault(i);
@@ -942,8 +1048,22 @@ void showDoorUnlockedScreen() {
   lcd.setCursor(0, 1);
 #if ENABLE_REED_SWITCHES
   int idx = vaultIndexFromId(selectedVault);
-  if (idx >= 0 && !doors[idx].closed) {
-    lcd.print("Close door now");
+  if (idx >= 0) {
+#if ENABLE_IR_SENSORS
+    if (locks[idx].parcelDetectedDuringUnlock) {
+      lcd.print("Close door now");
+    } else if (!doors[idx].closed) {
+      lcd.print("Put parcel inside");
+    } else {
+      lcd.print("Pull door open");
+    }
+#else
+    if (!doors[idx].closed) {
+      lcd.print("Close door now");
+    } else {
+      lcd.print("Pull door open");
+    }
+#endif
   } else {
     lcd.print("Pull door open");
   }
@@ -959,7 +1079,15 @@ void updateDoorUnlockedPrompt(int vaultIndex) {
   lcd.setCursor(0, 1);
   lcd.print("                ");
   lcd.setCursor(0, 1);
+#if ENABLE_IR_SENSORS
+  if (locks[vaultIndex].parcelDetectedDuringUnlock) {
+    lcd.print("Close door now");
+  } else {
+    lcd.print("Put parcel inside");
+  }
+#else
   lcd.print("Close door now");
+#endif
 }
 
 #endif // ENABLE_SOLENOID_LOCKS
@@ -1307,6 +1435,7 @@ void handleResponse(int httpCode, const char* responseBody) {
     registerLocalFailure();
     strncpy(lastResultMessage, strlen(message) ? message : "Invalid OTP", sizeof(lastResultMessage) - 1);
   } else if (httpCode == 400) {
+    registerLocalFailure();
     strncpy(lastResultMessage, strlen(message) ? message : "Bad request", sizeof(lastResultMessage) - 1);
   } else if (httpCode == 500) {
     if (strlen(debugMsg) > 0) {
