@@ -30,11 +30,15 @@ CURRENTLY WORKING:
 WORKING (JUST WIRED):
   [x] 3x Reed switches (one per vault door)
   [x] 3x IR obstacle sensors (LM393, one per vault compartment)
+  [x] 4-channel relay module (5V coils, opto-isolated)
+  [x] 3x 12V solenoid locks (one per vault door)
+  [x] External 12V/10A power supply for the solenoids
 
-TO BE WIRED:
-  [ ] 4-channel relay module (5V coils, opto-isolated)
-  [ ] 3x 12V solenoid locks (one per vault door)
-  [ ] External 12V/10A power supply for the solenoids
+CASH POD (additive, independent of the door locks):
+  [ ] PCA9685 16ch PWM servo driver (I2C, default addr 0x40)
+  [ ] 3x MG996R servo (one per vault cash pod)
+  [x] External 12V/10A power supply + buck converter set to 6V
+  [ ] 2200uF electrolytic capacitor (servo rail)
 
 
 ================================================================================
@@ -100,6 +104,8 @@ UPLOAD
      - LiquidCrystal I2C (Frank de Brabander)
      - ArduinoJson (Benoit Blanchon)
      - WiFiManager (tablatronix)
+     - Adafruit PWM Servo Driver (Adafruit) - required for the cash pod,
+       installed even if ENABLE_SERVO_LOCKS=0 (the include is unconditional)
   5. Select the COM port for your CP2102 board and upload.
      If the upload fails to connect, hold the BOOT button, press RESET,
      keep BOOT held until the upload starts, then release.
@@ -190,38 +196,162 @@ FAILSAFES
   - Wrong OTP or rate-limited OTP never actuates any lock.
 
 BENCH-TEST FIRST
-----------------
+---------------
   Wire only the control side (relays + ESP32), flash the firmware, run
   TEST 6 below, and watch the relay onboard LEDs before connecting the
   actual solenoids.
+
+
+===============================================================================
+            PART 4: CASH POD SERVOS (PCA9685 + MG996R, TRAPDOOR)
+===============================================================================
+
+Each vault also has a cash-drop trapdoor (a sliding metal sheet) controlled
+by an MG996R servo on a PCA9685 16ch PWM driver. This is INDEPENDENT of the
+solenoid locks - the door locks and the cash pod never share control pins.
+
+The pod fires ONLY when a delivery is fully confirmed (door opened, parcel
+placed, door closed = the 'door_closed_locked' event). At that moment the
+servo pulls the metal sheet UP, releasing the cash pod. The pod then auto
+re-locks after SERVO_POD_OPEN_MS (default 10s, config.h).
+
+The pod NEVER fires on wrong OTP, 'no_parcel' aborts, or 'auto_locked'
+failsafe timeouts - cash is only ever released on a verified delivery.
+
+WIRING
+------
+  Power rail (CRITICAL - keep separate from the ESP32 logic side):
+    12V PSU        -> Buck converter input (the same 12V supply as the
+                      solenoids, or a second one - both share common GND)
+    Buck OUTPUT    -> set to 6V (MG996R likes 4.8-6.6V; 6V = best torque)
+    6V (+V)        -> MG996R red wires (all three) - STRAIGHT from the buck.
+                      Do NOT rely on the PCA9685 header power rows for this.
+    6V (+V)        -> PCA9685 V+ terminal (optional; on this board the V+
+                      screw does NOT reach the header rows, so it does
+                      nothing for the servos - feed it or leave it out)
+    GND            -> PCA9685 GND, all three servo black wires, buck GND,
+                      AND ESP32 GND  <-- COMMON GROUND IS MANDATORY
+    2200uF cap     -> across the 6V rail, near the servos (smooths the
+                      inrush when a servo starts; prevents brown-outs)
+
+  IMPORTANT - POWER FLOW (verified on this build's board):
+    The PCA9685 servo driver only provides SIGNAL to the servos. Its header
+    power rows (V+) are NOT connected to the V+ screw / rail on this board
+    (clone-board defect - every header pin reads only ~0.2V regardless of
+    the rail). So the MG996R power pins MUST be wired directly from the
+    buck converter, and ONLY the signal wire goes to the driver header.
+
+  I2C control side (shares the LCD bus):
+    PCA9685 VCC    -> ESP32 5V (VIN)   (logic supply - separate from V+)
+    PCA9685 SDA    -> GPIO 21          (same bus as LCD SDA)
+    PCA9685 SCL    -> GPIO 22          (same bus as LCD SCL)
+    PCA9685 GND    -> ESP32 GND
+    PCA9685 OE     -> GND              (always enabled; tie low)
+    PCA9685 A0-A5  -> leave floating   (address stays 0x40; LCD is 0x27 - no conflict)
+
+  Servo signal (MG996R yellow/orange wire into the header TOP pin only):
+    Channel 3  -> Vault 1 pod   (board label "4" if the board is 1-indexed)
+    Channel 11 -> Vault 2 pod   (board label "12")
+    Channel 15 -> Vault 3 pod   (board label "16")
+    NOTE: PCA9685 software channels are 0-15. If your board's silkscreen
+    labels the headers 1-16, subtract 1 to get the software channel
+    (label "4" = ch 3, "12" = ch 11, "16" = ch 15).
+    NOTE: servo red/brown wires do NOT plug into the header - red joins the
+    6V rail, brown joins common GND; only orange/yellow goes to the header.
+
+  Servo current: MG996R stalls around ~2.5A on 6V. Three servos worst-case
+  approach 7.5A - your 12V/10A supply handles it, but the buck converter
+  must be rated for it too (>=3A continuous, 10A preferred). Use 18-20 AWG
+  for the servo rail wires.
+
+HOW IT WORKS
+------------
+  1. Correct OTP -> solenoid door lock releases (unchanged behaviour).
+  2. Rider opens door, places parcel, closes door.
+  3. Door closes + parcel confirmed -> solenoid re-engages AND the cash pod
+     servo for that vault slowly pulls the metal sheet UP over ~2.6s
+     (SERVO_RAMP_US_PER_SEC, configurable - a wire/pulley-like motion instead
+     of a snap). The LCD holds "Releasing cash! / Vault N" for
+     CASH_DROP_MSG_MS (4s, config.h) before returning to Select Vault -
+     pressing any keypad key skips the wait.
+  4. Once fully open, the pod stays open for SERVO_POD_OPEN_MS (10s). The
+     window starts AFTER the raise completes, so the pod is genuinely open
+     for the full 10s. Then the servo slowly lowers the sheet back DOWN over
+     ~2.6s, holds LOCKED for SERVO_POD_SETTLE_MS (1s), and the signal is
+     turned OFF - the servo goes limp and the sheet rests on its mechanical
+     stop (no more 24/7 endstop grinding). Runs in the background regardless
+     of the keypad screen.
+  5. Wrong OTP, failed sequence, or 30s failsafe timeout -> pod never moves.
+
+FAILSECURE (IMPORTANT - hardware)
+---------------------------------
+  - At boot the firmware snaps every servo to LOCKED (staggered, so the buck
+    isn't hit by all servo inrush at once), then releases the signal idle so
+    they go limp. A reboot can never leave a pod open.
+  - Normally the pod servos are ASLEEP (signal off, no holding torque).
+    The metal sheet MUST be designed so that whenever the servo is limp -
+    idle, or when the power rail dies - it falls back DOWN (blocking the
+    cash) by gravity or a spring. If your linkage holds the sheet UP without
+    servo power, that would be fail-OPEN and a real cash-loss risk. Verify
+    with the power-cycle bench test before deploying. (See CALIBRATION.)
+
+CALIBRATION
+-----------
+  SERVO_PULSE_LOCKED_US / SERVO_PULSE_UNLOCKED_US in config.h control the
+  endpoints (defaults 500us = ~0 deg and 2300us = ~170 deg). MG996R clones
+  vary; tuning steps:
+    a. Set UNLOCKED to something small (e.g. 600us), flash, unlock the vault
+       fully once, and watch which direction the servo sweeps.
+    b. Adjust UNLOCKED until the sheet is fully retracted (pod open).
+    c. Adjust LOCKED until the sheet fully blocks the pod (pod closed).
+    d. Re-flash with the tuned values. Never exceed ~2400us (endstop
+       mechanical stress) or go below ~400us.
+  NOTE - trim just inside the stops: the defaults sit AT the mechanical
+  endstops (500us/2300us). If the sheet seals/opens fully a few degrees off
+  the stop, prefer ~550-600us / ~2250us so the horns aren't jammed into the
+  endstops. The servos normally sleep when idle, so this matters most during
+  fire/re-lock and the boot snap.
+  SERVO_RAMP_US_PER_SEC sets the sweep speed (default 700 = ~2.6s full
+  travel). Raise for a faster "pull", lower for slower. Boot always snaps.
 
 
 ================================================================================
                         FEATURE FLAGS
 ================================================================================
 
-In config.h, three flags control optional hardware:
+In config.h, four flags control optional hardware:
 
   #define ENABLE_REED_SWITCHES  1    <-- active, reeds are wired
   #define ENABLE_IR_SENSORS     1    <-- active, IR sensors are wired
   #define ENABLE_SOLENOID_LOCKS 1    <-- active, relay + solenoids wired
+  #define ENABLE_SERVO_LOCKS    1    <-- active, PCA9685 + MG996R wired
 
 When OFF (0):
   - The GPIO pins are not initialized (no conflict if nothing is connected)
   - Boot self-test skips sensor/lock checks
   - The firmware runs with keypad + LCD + camera only
   - With locks off, a successful OTP only shows ACCESS GRANTED
+  - With servo locks off, a confirmed delivery does NOT release the cash pod
 
 When ON (1):
   - GPIO pins are set up as INPUT_PULLUP (reeds), INPUT (IR) and the relay
     pins as OUTPUT driven to the locked level at the very start of setup()
+  - The PCA9685 is initialized on the I2C bus right after the LCD: all pod
+    servos snap to LOCKED (staggered, so the buck isn't hit by all inrush
+    at once), settle briefly, then the signal goes OFF (servos go limp, sheet
+    rests locked by gravity - fail-secure at boot)
   - Boot self-test reads and prints sensor states + lock states
   - Door open/close and parcel present/empty events are monitored in the
     main loop; a successful OTP releases that vault's lock until the door
     closes again (or UNLOCK_MAX_TIMEOUT_MS elapses)
+  - With a confirmed delivery (door_closed_locked) the cash pod servo
+    slowly pulls the sheet UP (ramp at SERVO_RAMP_US_PER_SEC, ~2.6s),
+    holds open for SERVO_POD_OPEN_MS (~10s), slowly lowers back, settles
+    1s, then goes limp (no more endstop grind while idle)
   - If reed switches are disabled while locks are enabled, unlocking falls
     back to a fixed timed window (UNLOCK_FALLBACK_MS) since there is no
-    way to detect the door closing
+    way to detect the door closing (and the cash pod then never fires -
+    a delivery can't be confirmed without door/parcel feedback)
 
 
 ================================================================================
@@ -235,12 +365,15 @@ On every power-up or reset, the keypad ESP32 runs this sequence:
   3. If IR sensors enabled: reads and prints parcel states
   4. If solenoid locks enabled: prints lock states (always LOCKED at boot,
      no solenoid is ever actuated during the self-test)
-  5. Keypad check: shows "Press any key to continue..." (5s timeout)
-  6. Increments boot counter in NVS (non-volatile storage)
-  7. Shows "All OK - Boot #N" for 1 second
-  8. Connects to WiFi (shows "Connecting WiFi" on LCD)
-  9. Restores lockout state from NVS (if previously locked out)
-  10. Enters the main vault selection screen
+  5. If servo locks enabled: prints cash pod states (snapped to LOCKED and
+     released to idle in the init phase - no servo is re-moved during the
+     self-test)
+  6. Keypad check: shows "Press any key to continue..." (5s timeout)
+  7. Increments boot counter in NVS (non-volatile storage)
+  8. Shows "All OK - Boot #N" for 1 second
+  9. Connects to WiFi (shows "Connecting WiFi" on LCD)
+  10. Restores lockout state from NVS (if previously locked out)
+  11. Enters the main vault selection screen
 
 
 ================================================================================
@@ -371,6 +504,47 @@ TEST 7: SOLENOID LOCKS (FULL 12V)
   terminals to the 12V supply and repeat steps 5-8. You should hear each
   solenoid click/retract on unlock and re-engage on door close.
 
+TEST 8: CASH POD SERVOS (BENCH TEST - NO 12V YET)
+--------------------------------------------------
+  1. Wire the PCA9685 control side only (VCC 5V, GND, SDA 21, SCL 22).
+     Leave the servo power rail (V+) and servos DISCONNECTED for now.
+  2. Flash the firmware and open Serial Monitor @ 115200.
+  3. Boot self-test should print "Vault N cash pod: LOCKED - asleep (ch N)"
+     x3 (the servos snap to LOCKED, settle, then the signal goes OFF).
+  4. Drive a full delivery to completion (correct OTP -> open door -> place
+     parcel -> close door). Serial should print "Vault N CASH POD released
+     (raising)" and the LCD should show "Releasing cash! / Vault N" for ~4s
+     before returning to Select Vault (press any key to skip the wait).
+  5. Over the next ~2.6s the servo ramps UP (watch the pulse in Serial), then
+     "CASH POD open", holds ~10s, then "CASH POD lowering (auto re-lock)"
+     ramps DOWN ~2.6s, and finally "CASH POD locked (servo asleep)" - all
+     without touching the keypad. Verify the keypad/LCD stay fully responsive
+     the whole time (the ramp is non-blocking).
+  6. Run a failed/wrong sequence (wrong OTP, or open door -> close without
+     a parcel): the pod must NEVER move.
+
+TEST 9: CASH POD SERVOS (FULL 6V POWER)
+---------------------------------------
+  Only after TEST 8 passes:
+  1. Set the buck converter output to 6V BEFORE connecting anything.
+  2. Wire the three servos directly from the buck: all red wires -> buck +6V,
+     all brown wires -> common GND. Orange signal wires -> ch 3/11/15 TOP pins
+     on the PCA9685 (signal only - NOT the red/brown servo power pins).
+     Verify ALL grounds (ESP32, buck, PCA9685, servos) are common.
+  3. Repeat TEST 8 step 4: the correct vault's servo should SLOWLY pull the
+     metal sheet UP (~2.6s wire-like motion), hold ~10s, then SLOWLY lower it
+     back DOWN, settle 1s, and go limp/quiet (no hum while idle).
+  4. Power-cycle MID-UNLOCK (kill the 6V rail while the pod is open): the
+     servo goes limp. Verify your linkage falls back to the LOCKED position
+     (fail-secure). If it stays UP, your cash pod is fail-OPEN - redesign
+     the linkage before deploying.
+  5. Confirm the idle behaviour: at rest the servos are asleep (signal off,
+     no hum, ~no drive current). If they hum/grind while idle, the servo
+     signal isn't being turned OFF - check the "locked (servo asleep)" log.
+  6. Calibrate SERVO_PULSE_LOCKED_US / SERVO_PULSE_UNLOCKED_US (trim just
+     inside the stops) and SERVO_RAMP_US_PER_SEC (sweep speed) as needed
+     (see PART 4, CALIBRATION).
+
 
 ================================================================================
                          TROUBLESHOOTING
@@ -427,6 +601,64 @@ SOLUTION:
   - Not enough current from the 12V supply or too thin wires. The 10A
     supply has plenty of headroom; check the solenoid's rated voltage and
     your wiring gauge/connections.
+
+PROBLEM: Servo doesn't move but Serial shows "All cash pod servos: LOCKED"
+---------------------------------------------------------------------------
+  The boot log proves the code compiled and the PCA9685 answered on the bus.
+  Isolate the fault in this order:
+
+  Step 1: Confirm 0x40 on the bus (shared I2C with the LCD):
+          If the LCD works but servos don't, the driver is NOT on the bus
+          (LCD is 0x27, driver is 0x40 - no A0-A5 jumpers). Swap the dupont
+          SDA/SCL at the module end if 0x40 doesn't show up. If it shows up
+          at a different address, update PCA9685_ADDR in config.h to match.
+  Step 2: Power. Confirm buck output = 6.0V and that the servo RED/BROWN wires
+          are wired DIRECTLY from the buck (NOT through the PCA9685 header).
+          This board's header power rows are not connected to the rail, so a
+          servo plugged into the header gets NO power even with 6V on the V+
+          screw. Verify with a multimeter directly on the servo red/brown pins.
+  Step 3: Signal. Measure DC voltage on the servo ORANGE pin (or the header
+          top pin) while the system runs:
+            ~0.2V  -> pulses ARE present, problem is servo power (Step 2)
+            0V     -> header not driving the signal; try moving the plug to
+                      another channel (rules out a dead header pin)
+          Confirm wire colors: orange signal, red +, brown GND.
+  Step 4: Once power AND signal are both confirmed, re-flash LogiBox_OTP_Vault
+          and run TEST 8 -> TEST 9.
+
+PROBLEM: Cash pod never opens on a confirmed delivery
+SOLUTION:
+  - Check Serial for "Vault N CASH POD released". If missing, ENABLE_SERVO_LOCKS
+    may be 0, or the delivery didn't reach the confirmed state (watch for
+    "door_closed_locked" in the log; a "no_parcel"/"auto_locked" event never
+    fires the pod by design - that is correct behaviour).
+  - If released but the servo didn't move: verify PCA9685 VCC=5V, SDA=21/SCL=22,
+    OE tied to GND, and that the servo signal wire is in the right channel
+    header (ch 3/11/15 = vault 1/2/3) - and that the servo's red/brown power
+    wires really are on the buck rail, not the PCA9685 header.
+  - I2C conflict? The LCD must be at 0x27 and PCA9685 at 0x40 (no A0-A5
+    jumpers). Both share GPIO 21/22.
+
+PROBLEM: Servo moves the wrong direction / doesn't fully travel
+SOLUTION:
+  - Calibrate SERVO_PULSE_LOCKED_US and SERVO_PULSE_UNLOCKED_US in config.h
+    (see PART 4, CALIBRATION). MG996R clones vary a lot.
+
+PROBLEM: Pod servo twitches / jumps during boot
+SOLUTION:
+  - Servos are deliberately driven to LOCKED at startup - expect one rapid
+    move to the locked position ASAP after power-on. If it only happens on
+    every boot that is normal. If it happens repeatedly during normal
+    operation, check the servo supply: add/keep the 2200uF capacitor and
+    confirm the buck converter can deliver peak current.
+
+PROBLEM: Cash pod opens on power loss (cash falls out)
+RESULT:
+  - This is a MECHANICAL fail-open design, not a software bug. The firmware
+    drives LOCKED at boot and on the timed re-lock, but a dead servo has no
+    holding torque. The sliding sheet MUST fall back down (locked) by
+    gravity or a spring when the rail loses power. Redesign the linkage.
+    (See PART 4, FAILSECURE.)
 
 
 ================================================================================
@@ -491,9 +723,19 @@ ESP32 #1 (Keypad/LCD) - 38-pin DevKit (CP2102):
   IR Sensor V1       GPIO 34     Working (INPUT ONLY)
   IR Sensor V2       GPIO 35     Working (INPUT ONLY)
   IR Sensor V3       GPIO 36     Working (INPUT ONLY)
-  Relay IN1 (Lock1)  GPIO 32     Wired, bench test pending
-  Relay IN2 (Lock2)  GPIO 25     Wired, bench test pending
-  Relay IN3 (Lock3)  GPIO 26     Wired, bench test pending
+  Relay IN1 (Lock1)  GPIO 32     Working
+  Relay IN2 (Lock2)  GPIO 25     Working
+  Relay IN3 (Lock3)  GPIO 26     Working
+  PCA9685 SDA        GPIO 21     Cash pod (shares bus w/ LCD @ 0x27; PCA9685 @ 0x40)
+  PCA9685 SCL        GPIO 22     Cash pod
+  PCA9685 VCC        5V (VIN)    Cash pod logic supply
+  PCA9685 V+         6V (buck)   Servo power rail - NOTE: not routed to headers
+                                 on this board; servos are powered from the buck
+                                 DIRECTLY (red/brown wires), signal-only to driver
+  PCA9685 OE         GND         Always enabled
+  Servo ch 3/11/15   PCA9685     Vault 1/2/3 cash pod MG996R - signal wire ONLY
+                                 (orange) to the header top pin (board labels
+                                 4/12/16 if 1-indexed header silk)
 
   Free output pins (available for future use):
     GPIO 2   (strapping - must be HIGH at boot)
@@ -508,7 +750,8 @@ ESP32 #1 (Keypad/LCD) - 38-pin DevKit (CP2102):
 ================================================================================
 
   LogiBox_OTP_Vault/
-    LogiBox_OTP_Vault.ino  -> Keypad + LCD (OTP verification, camera trigger)
+    LogiBox_OTP_Vault.ino  -> Keypad + LCD (OTP verification, camera trigger,
+                               solenoid locks, cash pod servo control)
     config.h               -> All compile-time constants, feature flags
     types.h                -> Structs and enums
   LogiBox_ESP32CAM/
@@ -520,9 +763,12 @@ ESP32 #1 (Keypad/LCD) - 38-pin DevKit (CP2102):
 ================================================================================
 
 Created: July 2026
-Updated: August 2026 (reliability features, parallax scrolling, NVS
-  persistence, watchdog, feature flags, reed/IR sensor support, mDNS
-  camera discovery, 38-pin DevKit pinout, solenoid lock release via
-  4-channel relay with close-door re-lock + failsafe timeout)
+Updated: Sep 2026 (cash pod servos: verified wiring - servos powered directly
+  from the 6V buck, PCA9685 provides signal only on ch 3/11/15; slow
+  wire-pull ramp motion (SERVO_RAMP_US_PER_SEC) for open/re-lock, 10s open
+  window after ramp, servos sleep/limp when idle instead of grinding
+  endstops; fixed keypad freeze when skipping the "Releasing cash!" wait;
+  trapdoor releases on confirmed delivery only, boot fail-secure snap-to-
+  locked, independent of the solenoid door locks)
 For: LogiBox OTP Vault System
 ================================================================================

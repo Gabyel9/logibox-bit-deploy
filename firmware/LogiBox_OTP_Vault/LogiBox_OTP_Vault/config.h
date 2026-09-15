@@ -70,6 +70,64 @@
 // detect that the door was opened and closed again).
 #define UNLOCK_FALLBACK_MS     7000UL
 
+// ─── Cash Pod Servos (PCA9685 16ch PWM driver + MG996R) ───
+// INDEPENDENT of the solenoid locks: the pod is the cash-drop trapdoor,
+// one servo per vault. The servo pulls a sliding metal sheet UP to release
+// the cash pod. It fires ONLY on a fully confirmed delivery (door closed +
+// parcel placed = door_closed_locked). It re-locks itself after a fixed
+// window (SERVO_POD_OPEN_MS) - timed auto re-lock, nothing else drives it.
+#define ENABLE_SERVO_LOCKS      1
+
+// PCA9685 sits on the SAME I2C bus as the LCD (GPIO 21/22). Default
+// address 0x40 (no address jumpers soldered). Does not conflict with the
+// LCD at 0x27.
+#define PCA9685_ADDR            0x40
+#define SERVO_FREQ_HZ           50          // MG996R standard 50Hz (20ms frame)
+#define SERVO_OSC_HZ            25000000UL  // PCA9685 internal oscillator (Hz) - calibrate if angle drifts
+
+// Servo PWM channel -> vault mapping (plug MG996R signal into these channels).
+// NOTE: PCA9685 software channels are 0-15. If your board labels its headers
+// 1-16 (many clones do), subtract 1: label "4" = channel 3, "12" = 11, "16" = 15.
+#define SERVO_CH_V1             3
+#define SERVO_CH_V2             11
+#define SERVO_CH_V3             15
+
+// MG996R pulse widths (microseconds). Calibrate these against your actual
+// servo + trapdoor linkage:
+//   LOCKED   = sheet DOWN, blocking the cash pod.
+//   UNLOCKED = sheet pulled UP, cash pod released.
+// Defaults sit at the mechanical endstops (500us ~ 0deg, 2300us ~ 170deg).
+// Because the pod servos normally idle with the signal OFF (limp, sheet held
+// by gravity), these are only used during firing/ramping - see CALIBRATION
+// in SETUP_INSTRUCTIONS.txt for trimming just inside the stops.
+#define SERVO_PULSE_LOCKED_US    500        // MG996R ~0°
+#define SERVO_PULSE_UNLOCKED_US 2300        // MG996R ~170° (calibrate!)
+
+// Slow "wire pull" sweep rate in microseconds per second. At 700us/s the
+// servo takes ~2.6s to sweep the full 500->2300us travel (the MG996R's own
+// mechanical speed is ~0.5s, so the ramp, not the servo, controls speed).
+// Raise for faster, lower for slower (does NOT apply at boot - boot snaps).
+#define SERVO_RAMP_US_PER_SEC    700UL
+
+// How long the cash pod stays held fully open before it starts lowering.
+// NOTE: this window begins AFTER the raise ramp completes, so the pod is
+// genuinely open for the full duration (total cycle ~ ramp + OPEN + ramp).
+#define SERVO_POD_OPEN_MS       10000UL
+
+// How long the pod holds the LOCKED pulse after re-lock before the signal is
+// turned OFF (servo goes limp; sheet rests on the stop by gravity). Prevents
+// the servos grinding their endstops 24/7.
+#define SERVO_POD_SETTLE_MS      1000UL
+
+// Delay between channels when the servos snap to LOCKED at boot, so the buck
+// converter isn't hit by all servo inrush at once.
+#define BOOT_SERVO_STAGGER_MS    100
+
+// How long the LCD holds the "Releasing cash!" message after a confirmed
+// delivery before returning to SELECT_VAULT. Pressing any keypad key skips
+// the wait (flashLine behaviour).
+#define CASH_DROP_MSG_MS        4000UL
+
 // ─── Timing ───
 #define KEY_DEBOUNCE_MS           200
 #define IDLE_TIMEOUT_MS           30000UL

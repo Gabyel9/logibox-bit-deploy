@@ -24,6 +24,24 @@ struct LockState {
   unsigned long unlockedAt;
 };
 
+// ─── Cash Pod Phase (PCA9685 servo trapdoor) ───
+// The servo sweeps slowly (pulse-width ramp) instead of snapping, like a
+// wire-pulled trapdoor. Phases drive that motion state machine.
+enum PodPhase {
+  POD_IDLE = 0,        // locked; servo signal OFF (limp, sheet rests by gravity)
+  POD_RAISING,         // ramp LOCKED -> UNLOCKED (sheet pulling UP)
+  POD_OPEN,            // held fully open (UNLOCKED pulse) for SERVO_POD_OPEN_MS
+  POD_LOWERING,        // ramp UNLOCKED -> LOCKED (sheet dropping DOWN / re-lock)
+  POD_SETTLING         // holding LOCKED for SERVO_POD_SETTLE_MS before going limp
+};
+
+struct PodState {
+  PodPhase      phase;             // current motion phase (see PodPhase)
+  uint16_t      pulseUs;           // last pulse width actually written
+  unsigned long phaseStartedAt;    // millis() when the current phase began
+  unsigned long openAt;            // millis() when the pod reached fully OPEN
+};
+
 // ─── Network Messages ───
 enum NetworkOp {
   OP_START_CAMERA,

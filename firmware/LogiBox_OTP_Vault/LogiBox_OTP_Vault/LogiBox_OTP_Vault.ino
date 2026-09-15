@@ -12,6 +12,18 @@
   reed switch reports the door was opened and closed again, or a failsafe
   timeout forces it locked. Fail-secure: power loss or reset = locked.
 
+  CASH POD (optional, independent of the door locks): each vault also has
+  a cash-drop trapdoor controlled by an MG996R servo on a PCA9685 16ch PWM
+  driver (same I2C bus as the LCD). The pod fires ONLY on a fully confirmed
+  delivery (door closed + parcel placed = door_closed_locked event): the
+  servo slowly pulls the metal sheet UP (pulse-width ramp at
+  SERVO_RAMP_US_PER_SEC, a wire/pulley-like motion), holds open for
+  SERVO_POD_OPEN_MS, slowly lowers back, then the signal goes OFF so the
+  servo sleeps (no endstop grinding). It never fires on wrong OTP,
+  no_parcel, or auto_locked timeouts. Fail-secure at boot: all servos snap
+  to the LOCKED position (staggered) before anything else runs, then go
+  limp with the sheet resting locked by gravity.
+
   While a delivery session is active, the keypad tells the ESP32-CAM
   (LogiBox_ESP32CAM.ino) to start/stop capturing via a LAN HTTP call.
   The captured frames are stored in the web app as delivery evidence.
@@ -49,6 +61,7 @@
 #include <Keypad.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
+#include <Adafruit_PWMServoDriver.h>
 #include <string.h>
 #include <Preferences.h>
 #include "freertos/FreeRTOS.h"
@@ -106,6 +119,16 @@ const byte RELAY_OFF_LEVEL = LOW;
 LockState locks[NUM_VAULTS] = {{false, false, false, 0}, {false, false, false, 0}, {false, false, false, 0}};
 #endif
 
+// ---------------- Cash Pod Servos (PCA9685 + MG996R) ----------------
+// Independent of the solenoid locks. Shares the I2C bus with the LCD:
+// Wire.begin(LCD_SDA, LCD_SCL) in setup() initializes the bus the PCA9685
+// uses too, so no extra Wire.begin() is needed.
+#if ENABLE_SERVO_LOCKS
+Adafruit_PWMServoDriver servoDriver(PCA9685_ADDR);
+const byte SERVO_CH[NUM_VAULTS] = {SERVO_CH_V1, SERVO_CH_V2, SERVO_CH_V3};
+PodState pods[NUM_VAULTS] = {{POD_IDLE, 0, 0, 0}, {POD_IDLE, 0, 0, 0}, {POD_IDLE, 0, 0, 0}};
+#endif
+
 // ---------------- NVS Persistence ----------------
 Preferences nvs;
 
@@ -153,6 +176,11 @@ bool camIpValid = false;
 bool flashActive = false;
 unsigned long flashUntil = 0;
 ScreenState flashReturnTo = WELCOME;
+// Set true when a key press arrives while a flash message is up. Captured in
+// loop() BEFORE flashActive is cleared so the key handler can honor the
+// "press any key to skip the wait" behaviour (e.g. in DOOR_UNLOCKED, which
+// otherwise ignores all keys).
+bool flashSkipRequested = false;
 
 // ---------------- Parallax Scrolling ----------------
 // Supports two independent scroll lines (line 0 and line 1)
@@ -219,6 +247,18 @@ bool runBootSelfTest() {
     Serial.print("  Vault ");
     Serial.print(i + 1);
     Serial.println(" lock: LOCKED");
+  }
+#endif
+
+  // Cash pod servos: report idle state - snapped to LOCKED and released to
+  // limp (sheet rests locked by gravity) earlier in setup().
+#if ENABLE_SERVO_LOCKS
+  for (int i = 0; i < NUM_VAULTS; i++) {
+    Serial.print("  Vault ");
+    Serial.print(i + 1);
+    Serial.print(" cash pod: LOCKED - asleep (ch ");
+    Serial.print(SERVO_CH[i]);
+    Serial.println(")");
   }
 #endif
 
@@ -321,6 +361,23 @@ void setup() {
   lcd.init();
   lcd.backlight();
 
+  // Cash pod servos: init immediately after Wire.begin() so they are driven
+  // to LOCKED before anything else runs (fail-secure at power-on). The
+  // PCA9685 shares the I2C bus with the LCD (same Wire instance).
+#if ENABLE_SERVO_LOCKS
+  Serial.println("Initializing cash pod servos (PCA9685)...");
+  servoDriver.begin();
+  servoDriver.setOscillatorFrequency(SERVO_OSC_HZ);
+  servoDriver.setPWMFreq(SERVO_FREQ_HZ);
+  delay(10);
+  // Fail-secure first: snap every servo to LOCKED (staggered so the buck
+  // isn't hit by all inrush at once), then release them to idle/limp after
+  // settling. A dead servo holds nothing - the sheet must rest locked by
+  // gravity/spring (see FAILSECURE in SETUP_INSTRUCTIONS.txt).
+  initCashPods();
+  Serial.println("  All cash pod servos: LOCKED (asleep/idle)");
+#endif
+
   // Boot splash
   showBootSplash();
 
@@ -395,6 +452,9 @@ void loop() {
 #if ENABLE_SOLENOID_LOCKS
   checkLockStates();
 #endif
+#if ENABLE_SERVO_LOCKS
+  updatePods();
+#endif
 
   char key = keypad.getKey();
   if (!key) {
@@ -414,6 +474,9 @@ void loop() {
   lastKeyTime = now;
   lastActivityTime = now;
 
+  // Capture whether a flash was up so the key handler can honor the skip
+  // (flashActive is cleared before handleKeyPress runs).
+  flashSkipRequested = flashActive;
   flashActive = false;
 
   Serial.print("Key pressed: ");
@@ -528,6 +591,15 @@ void handleKeyPress(char key) {
       // off the single global selectedVault).
       // Keys are ignored while the door is released; re-locking is driven
       // by checkLockStates() (door close or failsafe timeout).
+      // EXCEPTION: if a flash message was up when the key arrived (e.g.
+      // "Releasing cash!", "Auto-locked") it means the rider pressed a key
+      // to skip the wait - jump straight to flashReturnTo. Without this,
+      // clearing flashActive would leave the keypad stuck on the flash
+      // screen forever (DOOR_UNLOCKED is excluded from idle timeout).
+      if (flashSkipRequested) {
+        flashSkipRequested = false;
+        showScreen(flashReturnTo);
+      }
       break;
   }
 }
@@ -1028,7 +1100,16 @@ void checkLockStates() {
     relockVault(i);
     // Normal completion (door closed + parcel confirmed) marks the vault
     // occupied; a failsafe timeout just aborts the session.
-    requestEventReport(timedOut ? "auto_locked" : "door_closed_locked", ALLOWED_VAULTS[i]);
+    bool deliveryConfirmed = !timedOut;
+    requestEventReport(deliveryConfirmed ? "door_closed_locked" : "auto_locked", ALLOWED_VAULTS[i]);
+    // Cash pod fires ONLY on a fully confirmed delivery. Never on a failsafe
+    // timeout (auto_locked) or a no_parcel abort. The pod then raises slowly,
+    // auto re-locks after SERVO_POD_OPEN_MS via updatePods(), and goes limp.
+#if ENABLE_SERVO_LOCKS
+    if (deliveryConfirmed) {
+      fireCashPod(i);
+    }
+#endif
 #else
     if (!timedOut && elapsed < UNLOCK_FALLBACK_MS) {
       continue;
@@ -1044,7 +1125,13 @@ void checkLockStates() {
       if (timedOut) {
         flashLine("Auto-locked", 1500, SELECT_VAULT);
       } else {
+        // Confirmed delivery: show the cash-drop footer instead of bouncing
+        // straight back to vault selection. Pressing any key skips the wait.
+#if ENABLE_SERVO_LOCKS
+        showCashDropMessage(i);
+#else
         showScreen(SELECT_VAULT);
+#endif
       }
     }
   }
@@ -1103,6 +1190,162 @@ void updateDoorUnlockedPrompt(int vaultIndex) {
 }
 
 #endif // ENABLE_SOLENOID_LOCKS
+
+// ---------------- Cash Pod Control (PCA9685 Servos) ----------------
+
+#if ENABLE_SERVO_LOCKS
+
+// Drive a channel's signal fully OFF (0% duty = no pulses) so the MG996R
+// goes limp. This is the normal idle state: no endstop grinding, ~0 servo
+// drive current. The sheet MUST rest in the LOCKED position by gravity or a
+// spring (fail-secure hardware requirement - see FAILSECURE below).
+void servoChannelOff(int channel) {
+  servoDriver.setPWM(channel, 0, 4096);   // PCA9685 "full off"
+}
+
+// Boot fail-secure: snap every servo to LOCKED (staggered ~BOOT_SERVO_STAGGER_MS
+// apart so the buck isn't hit by all servo inrush at once), hold briefly, then
+// set the signal OFF so the servos go limp instead of grinding the endstops.
+// The sheet sits on its mechanical stop by gravity from here on.
+void initCashPods() {
+  for (int i = 0; i < NUM_VAULTS; i++) {
+    servoDriver.writeMicroseconds(SERVO_CH[i], SERVO_PULSE_LOCKED_US);
+    delay(BOOT_SERVO_STAGGER_MS);
+  }
+  delay(SERVO_POD_SETTLE_MS);
+  for (int i = 0; i < NUM_VAULTS; i++) {
+    servoChannelOff(SERVO_CH[i]);
+  }
+}
+
+// Release the cash pod: re-energize the servo and begin the slow raise ramp
+// (LOCKED -> UNLOCKED at SERVO_RAMP_US_PER_SEC, like a wire-pulled trapdoor).
+// Only ever called from checkLockStates() on a confirmed delivery
+// (door_closed_locked) - never on wrong OTP, no_parcel, or auto_locked.
+// The pod auto re-locks after ramp + SERVO_POD_OPEN_MS + ramp via updatePods().
+void fireCashPod(int vaultIndex) {
+  if (vaultIndex < 0 || vaultIndex >= NUM_VAULTS) return;
+  PodState* p = &pods[vaultIndex];
+  if (p->phase != POD_IDLE) return;          // already raising/open - don't re-fire
+  servoDriver.writeMicroseconds(SERVO_CH[vaultIndex], SERVO_PULSE_LOCKED_US);
+  p->phase = POD_RAISING;
+  p->pulseUs = SERVO_PULSE_LOCKED_US;
+  p->phaseStartedAt = millis();
+  p->openAt = 0;
+  Serial.print("Vault ");
+  Serial.print(vaultIndex + 1);
+  Serial.println(" CASH POD released (raising)");
+}
+
+// Force the pod back toward locked (sheet down). Safe to call mid-cycle.
+void relockCashPod(int vaultIndex) {
+  if (vaultIndex < 0 || vaultIndex >= NUM_VAULTS) return;
+  PodState* p = &pods[vaultIndex];
+  if (p->phase == POD_IDLE || p->phase == POD_SETTLING) return;  // already locked
+  p->phase = POD_LOWERING;
+  p->phaseStartedAt = millis();
+  Serial.print("Vault ");
+  Serial.print(vaultIndex + 1);
+  Serial.println(" CASH POD re-locking (lowering)");
+}
+
+// Advance one pod's ramp toward its phase target at SERVO_RAMP_US_PER_SEC.
+// The pulse is derived from elapsed time since the phase began, so it is
+// smooth and independent of how often loop() runs. Returns true when the
+// ramp reaches the target so the caller can switch phases.
+bool rampPodPulse(int vaultIndex) {
+  PodState* p = &pods[vaultIndex];
+  bool lowering = (p->phase == POD_LOWERING);
+  uint16_t target = lowering ? SERVO_PULSE_LOCKED_US : SERVO_PULSE_UNLOCKED_US;
+  unsigned long elapsedMs = millis() - p->phaseStartedAt;
+  unsigned long stepUs = (elapsedMs * SERVO_RAMP_US_PER_SEC) / 1000UL;
+
+  uint16_t next;
+  bool reached;
+  if (lowering) {
+    long v = SERVO_PULSE_UNLOCKED_US - (long)stepUs;
+    reached = v <= (long)target;
+    next = reached ? target : (uint16_t)v;
+  } else {
+    long v = SERVO_PULSE_LOCKED_US + (long)stepUs;
+    reached = v >= (long)target;
+    next = reached ? target : (uint16_t)v;
+  }
+
+  if (next != p->pulseUs) {
+    p->pulseUs = next;
+    servoDriver.writeMicroseconds(SERVO_CH[vaultIndex], next);
+  }
+  return reached;
+}
+
+// Cash pod state machine + timed auto re-lock. Called every loop(). Runs
+// fully independent of the solenoid/door cycle and of the current screen
+// state: once a pod fires it raises slowly, holds open for SERVO_POD_OPEN_MS,
+// lowers slowly, settles, then goes limp - no keypad interaction required.
+void updatePods() {
+  for (int i = 0; i < NUM_VAULTS; i++) {
+    PodState* p = &pods[i];
+
+    switch (p->phase) {
+      case POD_RAISING:
+        if (rampPodPulse(i)) {
+          p->phase = POD_OPEN;
+          p->openAt = millis();
+          p->phaseStartedAt = millis();
+          Serial.print("Vault ");
+          Serial.print(i + 1);
+          Serial.println(" CASH POD open");
+        }
+        break;
+
+      case POD_OPEN:
+        if (millis() - p->phaseStartedAt >= SERVO_POD_OPEN_MS) {
+          p->phase = POD_LOWERING;
+          p->phaseStartedAt = millis();
+          Serial.print("Vault ");
+          Serial.print(i + 1);
+          Serial.println(" CASH POD lowering (auto re-lock)");
+        }
+        break;
+
+      case POD_LOWERING:
+        if (rampPodPulse(i)) {
+          p->phase = POD_SETTLING;
+          p->phaseStartedAt = millis();
+        }
+        break;
+
+      case POD_SETTLING:
+        if (millis() - p->phaseStartedAt >= SERVO_POD_SETTLE_MS) {
+          servoChannelOff(SERVO_CH[i]);
+          p->pulseUs = 0;
+          p->phase = POD_IDLE;
+          Serial.print("Vault ");
+          Serial.print(i + 1);
+          Serial.println(" CASH POD locked (servo asleep)");
+        }
+        break;
+
+      case POD_IDLE:
+      default:
+        break;
+    }
+  }
+}
+
+// Footer for a confirmed delivery: holds the LCD on "Releasing cash!" with
+// the vault number on line 1 while the pod servo slowly pulls the sheet up,
+// then returns to SELECT_VAULT after CASH_DROP_MSG_MS. Called only from the
+// delivery-success branch of checkLockStates().
+void showCashDropMessage(int vaultIndex) {
+  flashLine("Releasing cash!", CASH_DROP_MSG_MS, SELECT_VAULT);
+  lcd.setCursor(0, 1);
+  lcd.print("Vault ");
+  lcd.print(ALLOWED_VAULTS[vaultIndex]);
+}
+
+#endif // ENABLE_SERVO_LOCKS
 
 // ---------------- Idle Timeout ----------------
 
