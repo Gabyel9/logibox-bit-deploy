@@ -116,7 +116,7 @@ const byte RELAY_OFF_LEVEL = HIGH;
 const byte RELAY_ON_LEVEL  = HIGH;
 const byte RELAY_OFF_LEVEL = LOW;
 #endif
-LockState locks[NUM_VAULTS] = {{false, false, false, 0}, {false, false, false, 0}, {false, false, false, 0}};
+LockState locks[NUM_VAULTS] = {{false, false, false, 0, 0}, {false, false, false, 0, 0}, {false, false, false, 0, 0}};
 #endif
 
 // ---------------- Cash Pod Servos (PCA9685 + MG996R) ----------------
@@ -687,6 +687,10 @@ void showScreen(ScreenState state) {
 
   switch (state) {
     case WELCOME:
+      // Stop the camera whenever the UI returns to idle. Any path landing on
+      // WELCOME ends the active attempt (idle timeout and '*' also stop, so
+      // this is a belt-and-braces safety net; duplicate stops are no-ops).
+      requestCameraCommand(OP_STOP_CAMERA, "");
       showWelcomeScreen();
       break;
     case SELECT_VAULT:
@@ -994,6 +998,7 @@ void unlockVault(int vaultIndex) {
   locks[vaultIndex].unlocked = true;
   locks[vaultIndex].doorOpenedDuringUnlock = false;
   locks[vaultIndex].parcelDetectedDuringUnlock = false;
+  locks[vaultIndex].parcelRemovedSince = 0;
   locks[vaultIndex].unlockedAt = millis();
   digitalWrite(RELAY_PINS[vaultIndex], RELAY_ON_LEVEL);
   Serial.print("Vault ");
@@ -1072,13 +1077,43 @@ void checkLockStates() {
       updateDoorUnlockedPrompt(i);
       continue;
     }
+
+    // Stage 2b: the rider pulled the parcel back out after it was detected.
+    // The IR is a beam-break sensor, so a parcel resting just off the beam
+    // (or a hand briefly clearing it during repositioning) would otherwise
+    // read as "removed". To avoid false aborts, a removal is only declared
+    // after the beam stays empty for PARCEL_REMOVED_CONFIRM_MS; the beam
+    // returning before that cancels the pending removal. Do NOT continue
+    // here: the close-door evaluation must run in the same pass so a
+    // simultaneous close+empty is caught immediately.
+    if (locks[i].doorOpenedDuringUnlock &&
+        locks[i].parcelDetectedDuringUnlock) {
+      if (parcels[i].present) {
+        // Parcel is back in the beam - cancel any pending removal.
+        locks[i].parcelRemovedSince = 0;
+      } else if (locks[i].parcelRemovedSince == 0) {
+        // First sustained-empty sample: start the confirm window.
+        locks[i].parcelRemovedSince = millis();
+      } else if (millis() - locks[i].parcelRemovedSince >= PARCEL_REMOVED_CONFIRM_MS) {
+        locks[i].parcelDetectedDuringUnlock = false;
+        locks[i].parcelRemovedSince = 0;
+        requestEventReport("parcel_removed", ALLOWED_VAULTS[i]);
+        updateDoorUnlockedPrompt(i);
+      }
+    }
 #endif
 
     // With IR sensors enabled, the close-door contract is only satisfied
-    // once a parcel has actually been detected inside the vault.
+    // once a parcel has actually been detected inside the vault. The latch
+    // alone is not enough: the beam must be blocking at the moment the rider
+    // closes the door. Without the live check, pulling the parcel back out
+    // and shutting the door within PARCEL_REMOVED_CONFIRM_MS (before the
+    // pending-removal timer elapses) would fire the cash pod on an empty
+    // vault. Fail-safe: a parcel that doesn't sit in the beam aborts the
+    // delivery (rider retries) rather than releasing cash.
     bool parcelOk = true;
 #if ENABLE_IR_SENSORS
-    parcelOk = locks[i].parcelDetectedDuringUnlock;
+    parcelOk = locks[i].parcelDetectedDuringUnlock && parcels[i].present;
 #endif
 
     if (!timedOut) {

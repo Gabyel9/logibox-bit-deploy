@@ -23,6 +23,12 @@ const EVENT_HANDLERS = {
     update: { parcelConfirmed: true },
     action: 'Parcel Placed',
   },
+  parcel_removed: {
+    // Session stays active (deliveryInProgress untouched) so the rider can
+    // re-place the parcel and complete the delivery.
+    update: { parcelConfirmed: false },
+    action: 'Parcel Removed Before Lock',
+  },
   door_closed_locked: {
     update: {
       status: 'occupied',

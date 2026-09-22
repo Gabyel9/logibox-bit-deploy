@@ -63,8 +63,9 @@ const char* DEVICE_ID     = "esp32-cam-001";
 // Vercel API endpoint for snapshot uploads
 const char* FUNCTION_URL  = "https://logibox-bit-deploy-3xzd.vercel.app/api/camera-upload";
 
-// Capture interval - 5 seconds keeps us under Firestore's free write quota
-const unsigned long CAPTURE_INTERVAL_MS = 5000;
+// Capture interval - 3 seconds gives good delivery-evidence density while
+// staying on top of upload time and Firestore's free write quota
+const unsigned long CAPTURE_INTERVAL_MS = 3000;
 
 // mDNS hostname the keypad uses to find this camera on the LAN.
 const char* MDNS_HOSTNAME = "logiboxcam";

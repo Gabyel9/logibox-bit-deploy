@@ -22,6 +22,7 @@ struct LockState {
   bool doorOpenedDuringUnlock;
   bool parcelDetectedDuringUnlock;
   unsigned long unlockedAt;
+  unsigned long parcelRemovedSince;   // millis() when IR first went empty (0 = not pending)
 };
 
 // ─── Cash Pod Phase (PCA9685 servo trapdoor) ───

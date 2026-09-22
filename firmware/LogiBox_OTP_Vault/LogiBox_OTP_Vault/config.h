@@ -130,11 +130,17 @@
 
 // ─── Timing ───
 #define KEY_DEBOUNCE_MS           200
-#define IDLE_TIMEOUT_MS           30000UL
+#define IDLE_TIMEOUT_MS           15000UL
 #define RESULT_DISPLAY_MS         2000UL
 #define VERIFY_TIMEOUT_MS         25000UL
 #define DOOR_DEBOUNCE_MS          50
 #define PARCEL_DEBOUNCE_MS        50
+// How long the IR beam must stay empty before a placed parcel counts as
+// removed again. Longer than the debounce on purpose: the IR only reads
+// "present" while the beam is blocked, so a parcel resting off the beam or a
+// hand clearing it during repositioning can briefly read empty. This window
+// ignores those transients; a re-blocked beam cancels the pending removal.
+#define PARCEL_REMOVED_CONFIRM_MS 1500UL
 #define WIFI_RECONNECT_TIMEOUT_MS 8000
 #define CAM_IP_CACHE_MS           60000UL
 #define VERIFY_PROGRESS_BLINK_MS  500
