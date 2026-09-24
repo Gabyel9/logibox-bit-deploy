@@ -96,7 +96,7 @@ function Dashboard() {
     () => { closeAndClearOTP(); }
   );
 
-  const OTP_COOLDOWN_MS = 60 * 1000;
+  const OTP_COOLDOWN_MS = 120 * 1000;
   const [deliveryForm, setDeliveryForm] = useState({
     receiverName: '',
     contactNumber: '',

@@ -150,7 +150,7 @@ CODE CONFIG (LogiBox_ESP32CAM.ino)
 
 CAMERA COMMANDS (LAN HTTP)
 --------------------------
-  http://logiboxcam.local/start          -> begin capturing every 5 seconds
+  http://logiboxcam.local/start          -> begin capturing every 3 seconds
   http://logiboxcam.local/start?vault=2  -> begin capturing, tag session "vault 2"
   http://logiboxcam.local/stop           -> stop capturing
   (or use the camera's assigned IP printed in Serial after boot)
@@ -175,9 +175,22 @@ WIRING (power side, per channel - keep 12V wiring separate from ESP32)
     IN1 = Vault 1, IN2 = Vault 2, IN3 = Vault 3, IN4 = spare
 
   Use the NO (Normally Open) terminals: when the relay coil is off, the
-  circuit is broken, so the solenoid stays locked. The 12V ground does NOT
-  connect to the ESP32 ground - the only link between the two sides is
-  through the relay contacts themselves.
+  circuit is broken, so the solenoid stays locked.
+
+  GROUNDING (two separate sides - get this right or the ESP32 will reset):
+    Control side (opto-isolated):  Relay VCC -> ESP32 5V/VIN, Relay GND ->
+      ESP32 GND. Relay IN1/2/3 -> GPIO 32/25/26. These MUST share a common
+      ground with the ESP32 - the optocoupler on the board needs a return
+      path to drive the relay coil.
+    Load side (12V high power): 12V PSU, relay COM/NO and the solenoids
+      form their own isolated circuit. The 12V PSU negative does NOT connect
+      back to the ESP32 ground - the only link between the two sides is
+      through the relay contacts and the optocouplers on the module.
+    Sharing grounds across the two sides (e.g. tying the 12V PSU negative to
+    the ESP32, or powering the module's LED indicators from the 12V rail)
+    risks noise, resets and possible latch-ups. Keep the 12V wiring and the
+    ESP32 logic wiring as two separate ground domains joined only inside the
+    relay module.
 
 HOW IT WORKS
 ------------
@@ -455,7 +468,7 @@ TEST 2: CAMERA ALONE
   1. Power the ESP32-CAM on the same WiFi as the keypad
   2. Visit http://logiboxcam.local/start in a browser
   3. Open the web app -> Camera page -> "Captured Sessions"
-  4. A session with new frames should appear every 5 seconds
+  4. A session with new frames should appear every 3 seconds
 
 TEST 3: KEYPAD + CAMERA (END-TO-END)
 ------------------------------------
@@ -465,6 +478,11 @@ TEST 3: KEYPAD + CAMERA (END-TO-END)
   4. Enter the correct OTP -> "ACCESS GRANTED"
   5. The camera starts capturing and uploads frames tagged with that vault
   6. In the web app, Camera page shows the session; download a frame
+  7. CAMERA AUTO-STOP: with the keypad, wait for IDLE_TIMEOUT_MS (15s) with no
+     key presses (or press '*'). The LCD returns to the welcome screen and the
+     camera is told to STOP - new frames stop appearing. NOTE: the camera keeps
+     recording across SELECT_VAULT and retries; it only stops when the keypad
+     returns to WELCOME (idle timeout or '*').
 
 TEST 4: REED SWITCHES (NOW ACTIVE)
 -----------------------------------
@@ -474,11 +492,20 @@ TEST 4: REED SWITCHES (NOW ACTIVE)
   4. LCD shows door status updates
 
 TEST 5: IR SENSORS (NOW ACTIVE)
---------------------------------
+-------------------------------
   1. Re-flash the keypad ESP32 (feature flag is already enabled)
   2. Boot self-test should print parcel states (PRESENT/EMPTY for each vault)
   3. Place/remove a parcel -> Serial prints the state change
   4. LCD shows parcel status updates
+  5. PARCEL REMOVAL RE-ARM: unlock a vault, place a parcel, then REMOVE it and
+     leave the beam empty for PARCEL_REMOVED_CONFIRM_MS (1.5s, config.h). The
+     device sends a "parcel_removed" event, clears the parcel latch, and
+     re-arms - the next delivery attempt starts clean. The lock re-engages
+     only if the door closes while the vault is still empty (see TEST 6 step 9).
+  6. Confirm the 1.5s confirm window: unlock again, place a parcel, then QUICKLY
+     wave a hand through the beam (occupied-and-empty within 1.5s) and put the
+     parcel back. The delivery must NOT abort - a sustained empty beam, not a
+     brief blink, is what counts as a removal.
 
 TEST 6: SOLENOID LOCKS (BENCH TEST - RELAYS ONLY, NO 12V)
 ----------------------------------------------------------
@@ -494,9 +521,16 @@ TEST 6: SOLENOID LOCKS (BENCH TEST - RELAYS ONLY, NO 12V)
   6. Trigger the reed switch (open then close the door or wave a magnet):
      when it reports CLOSED again, the LED turns off, Serial prints
      "Vault N RELOCKED" and the keypad returns to Select Vault.
-  7. Repeat step 5 but leave the door alone -> after ~30s the LED turns off
-     by itself (failsafe timeout) and the LCD flashes "Auto-locked".
-  8. Power-cycle mid-unlock -> relays drop immediately (fail-secure).
+7. Repeat step 5 but leave the door alone -> after ~30s the LED turns off
+      by itself (failsafe timeout) and the LCD flashes "Auto-locked".
+   8. Power-cycle mid-unlock -> relays drop immediately (fail-secure).
+   9. DOOR-CLOSE PARCEL CHECK (the fast pull-out hole): repeat step 5, but this
+      time pull the parcel OUT after it was detected and close the door quickly
+      - even within the 1.5s removal window. The delivery must NOT confirm:
+      Serial prints "no_parcel", the lock re-engages, and the cash pod NEVER
+      fires. The beam is checked LIVE at door-close (parcelOk = parcel detected
+      during the unlock AND still present now), so a fast pull-out-and-close
+      can never drop cash on an empty vault.
 
 TEST 7: SOLENOID LOCKS (FULL 12V)
 ---------------------------------
@@ -770,5 +804,11 @@ Updated: Sep 2026 (cash pod servos: verified wiring - servos powered directly
   endstops; fixed keypad freeze when skipping the "Releasing cash!" wait;
   trapdoor releases on confirmed delivery only, boot fail-secure snap-to-
   locked, independent of the solenoid door locks)
+Updated: Sep 2026 (delivery safety + camera cadence: parcel pull-out re-arms
+  the delivery after a 1.5s confirm window (PARCEL_REMOVED_CONFIRM_MS) and
+  reports "parcel_removed"; door-close live-beam check (parcelOk = detected-
+  during-unlock AND present-now) guarantees no cash release on an empty vault
+  even on fast pull-out-and-close; camera auto-stops when the keypad returns
+  to WELCOME after IDLE_TIMEOUT_MS (15s); camera capture interval 5s -> 3s)
 For: LogiBox OTP Vault System
 ================================================================================
