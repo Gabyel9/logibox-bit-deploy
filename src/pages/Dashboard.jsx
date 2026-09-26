@@ -6,7 +6,10 @@ import { collection, doc, setDoc, onSnapshot, writeBatch, addDoc, serverTimestam
 import { db, auth } from '../config/firebase';
 import { generateSecureOTP, hashOTP } from '../utils/otp';
 import { encryptOTP, decryptOTP } from '../utils/crypto';
-import { sanitizeUserInput } from '../utils/sanitize';
+// stripHtml only, not sanitizeUserInput: these values render as JSX text
+// children, which React already escapes. Running escapeHtml on top of that
+// double-escaped the text and showed literal entities (O'Brien -> O&#039;Brien).
+import { stripHtml } from '../utils/sanitize';
 import { useVaultTimer } from '../hooks/useVaultTimer';
 import Navbar from '../components/Navbar';
 
@@ -459,7 +462,7 @@ function Dashboard() {
     const errors = {};
 
     if (!deliveryForm.receiverName || !deliveryForm.receiverName.trim()) {
-      errors.receiverName = 'Receiver name is required';
+      errors.receiverName = 'Rider name is required';
     }
 
     if (!deliveryForm.contactNumber) {
@@ -818,9 +821,9 @@ function Dashboard() {
                           <div style={styles.vaultDetails}>
                             <div style={styles.detailGrid}>
                               {[
-                                { label: 'Delivery Rider', value: sanitizeUserInput(vault.receiverName) },
-                                { label: 'Contact', value: sanitizeUserInput(vault.contactNumber) },
-                                { label: 'Parcel', value: sanitizeUserInput(vault.parcelInfo) },
+                                { label: 'Delivery Rider', value: stripHtml(vault.receiverName) },
+                                { label: 'Contact', value: stripHtml(vault.contactNumber) },
+                                { label: 'Parcel', value: stripHtml(vault.parcelInfo) },
                                 { label: 'Fee', value: `₱${vault.deliveryFee}` },
                               ].map((item, i) => (
                                 <div key={i} style={styles.detailItem}>
@@ -1024,7 +1027,7 @@ function Dashboard() {
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '1rem', WebkitOverflowScrolling: 'touch' }}>
               {[
-                { label: 'Receiver Name', key: 'receiverName', placeholder: 'Enter receiver name' },
+                { label: 'Delivery Rider', key: 'receiverName', placeholder: 'Enter rider name' },
                 { label: 'Contact Number', key: 'contactNumber', placeholder: 'Enter contact number', numeric: true },
                 { label: 'Parcel Info', key: 'parcelInfo', placeholder: 'Enter parcel description' },
                 { label: 'Delivery Fee (₱)', key: 'deliveryFee', placeholder: '0.00', numeric: true },
@@ -1102,7 +1105,7 @@ function Dashboard() {
               </div>
               <div style={{ ...styles.modalBody, maxHeight: '60vh', overflowY: 'auto' }}>
                 {[
-                  { label: 'Receiver Name', key: 'receiverName', placeholder: 'Enter receiver name' },
+                  { label: 'Delivery Rider', key: 'receiverName', placeholder: 'Enter rider name' },
                   { label: 'Contact Number', key: 'contactNumber', placeholder: 'Enter contact number', numeric: true },
                   { label: 'Parcel Info', key: 'parcelInfo', placeholder: 'Enter parcel description' },
                   { label: 'Delivery Fee (₱)', key: 'deliveryFee', placeholder: '0.00', numeric: true },

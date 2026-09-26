@@ -9,7 +9,7 @@ fails safe: door stays/re-engages locked and no cash is released.
 
 ## How a delivery works
 
-1. **Owner generates an OTP** in the web app for a vault + receiver.
+1. **Owner generates an OTP** in the web app for a vault + rider.
 2. **Rider** walks up to the keypad: presses a key, picks the vault (1/2/3),
    and enters the 6-digit OTP.
 3. The server verifies the code against the owner's vault (single-use, 5-min

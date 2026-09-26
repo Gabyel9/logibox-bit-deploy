@@ -356,7 +356,7 @@ function LockerSimulator() {
                   <div style={styles.vaultCardDetails}>
                     {vault.receiverName && (
                       <div style={styles.vaultCardRow}>
-                        <span style={styles.vaultCardLabel}>Receiver:</span>
+                        <span style={styles.vaultCardLabel}>Delivery Rider:</span>
                         <span style={styles.vaultCardValue}>{vault.receiverName}</span>
                       </div>
                     )}

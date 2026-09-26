@@ -3,8 +3,63 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { sanitizeLogText } from '../utils/sanitize';
+import { stripHtml } from '../utils/sanitize';
 import Navbar from '../components/Navbar';
+
+// Firestore device ids cannot be renamed — they are compiled into the firmware
+// as DEVICE_ID (config.h) and used as Firestore document keys — and the
+// `devices` collection is Admin-SDK only (firestore.rules:114-116), so the
+// frontend cannot read a friendly name from it. Map the id to a label on
+// display instead. Unknown ids fall through to the raw id rather than blank.
+const DEVICE_LABELS = {
+  'esp32-test-001': 'LogiBox',
+  'esp32-cam-001': 'LogiBox Cam',
+};
+
+// The stored `details` for device actions is machine telemetry written by
+// api/device-event.js:183, e.g.
+//   "Vault 2 event 'door_closed_locked' reported by device esp32-test-001"
+// Map each event slug to a sentence an operator can read. Keyed on the slug
+// rather than the action, because two different rows share the action
+// "Delivery Session Started" (OTP unlock vs session start).
+const DEVICE_EVENT_TEXT = {
+  session_start: 'delivery session started',
+  door_opened: 'door opened',
+  parcel_placed: 'parcel placed inside',
+  parcel_removed: 'parcel taken back out before locking',
+  door_closed_locked: 'parcel delivered and vault locked securely',
+  no_parcel: 'door closed with no parcel, nothing was stored',
+  auto_locked: 'auto-locked on timeout, no delivery recorded',
+};
+
+const humanizeLogDetails = (log) => {
+  const details = log.details || '';
+  const vault = log.vaultId != null ? `Vault ${log.vaultId} ` : '';
+
+  // Matches both "...reported by device esp32-test-001" (device-event.js:183)
+  // and "...entered by device esp32-test-001 for vault 2" (device-verify-otp.js:262).
+  const deviceId = details.match(/device (\S+?)(?: for vault|$)/)?.[1];
+  const source = deviceId ? DEVICE_LABELS[deviceId] || deviceId : '';
+  const suffix = source ? ` · ${source}` : '';
+
+  // OTP verifier success row — carries no event slug.
+  if (details.includes('opened via device')) {
+    return `${vault}— unlocked, code accepted${suffix}`;
+  }
+
+  // Wrong OTP reported by the device — also has no event slug.
+  if (details.includes('Invalid OTP entered by device')) {
+    return `${vault}— wrong code entered${suffix}`;
+  }
+
+  const slug = details.match(/event '([^']+)'/)?.[1];
+  if (slug) {
+    return `${vault}— ${DEVICE_EVENT_TEXT[slug] || slug}${suffix}`;
+  }
+
+  // Login, Logout, OTP and dashboard-written rows are already human.
+  return details;
+};
 
 function ActivityLogs() {
   const { logout, user } = useAuth();
@@ -194,8 +249,8 @@ function ActivityLogs() {
                 <div key={log.id} className="log-item-enter" style={styles.logItem}>
                   <div style={{ ...styles.logDot, backgroundColor: getActionColor(log.action) }}></div>
                   <div style={styles.logContent}>
-                    <div style={styles.logAction}>{sanitizeLogText(log.action)}</div>
-                    <div style={styles.logDetails}>{sanitizeLogText(log.details)}</div>
+                    <div style={styles.logAction}>{stripHtml(log.action)}</div>
+                    <div style={styles.logDetails}>{stripHtml(humanizeLogDetails(log))}</div>
                   </div>
                   <div style={styles.logTimestamp}>{formatTimestamp(log.timestamp)}</div>
                 </div>

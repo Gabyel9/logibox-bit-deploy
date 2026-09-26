@@ -23,7 +23,7 @@ On the **Dashboard**:
 1. Find the vault you want (Vault 1 / 2 / 3).
 2. Click **Generate OTP** (or **Regenerate** if a code already exists).
 3. Optionally start a delivery first (see below) so the code is tied to a
-   receiver — otherwise you get a plain code you can share.
+   rider — otherwise you get a plain code you can share.
 4. Copy the 6-digit OTP and send it to your rider.
 
 **Rules that matter:**
@@ -42,7 +42,7 @@ On the **Dashboard**:
 From the Dashboard, click **New Delivery** and fill in:
 
 - **Selected Vault** — which compartment
-- **Delivery Rider** — receiver name
+- **Delivery Rider** — rider name
 - **Contact** — phone
 - **Parcel Info** — what's being delivered
 - **Delivery Fee** — amount to be released from the cash pod

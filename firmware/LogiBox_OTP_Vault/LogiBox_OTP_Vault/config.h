@@ -1,5 +1,5 @@
-#ifndef CONFIG_H
-#define CONFIG_H
+#ifndef LOGIBOX_CONFIG_H
+#define LOGIBOX_CONFIG_H
 
 // ─── Feature Flags ───
 // Set to 1 when hardware is connected, 0 to skip sensor init/monitoring.
