@@ -5,7 +5,6 @@ import { doc, collection, query, orderBy, limit, onSnapshot } from 'firebase/fir
 import { db } from '../config/firebase';
 import Navbar from '../components/Navbar';
 
-const OFFLINE_THRESHOLD_MS = 10 * 1000;
 const SNAPSHOT_HISTORY_LIMIT = 60;
 
 function CameraFeed() {
@@ -13,16 +12,8 @@ function CameraFeed() {
   const navigate = useNavigate();
   const [isMobile, setIsMobile] = useState(false);
   const [cameraData, setCameraData] = useState(null);
-  const [now, setNow] = useState(0);
   const [snapshots, setSnapshots] = useState([]);
   const [expandedSession, setExpandedSession] = useState(null);
-
-  useEffect(() => {
-    const updateNow = () => setNow(Date.now());
-    updateNow();
-    const id = setInterval(updateNow, 1000);
-    return () => clearInterval(id);
-  }, []);
 
   useEffect(() => {
     const checkMobile = () => {
@@ -73,7 +64,6 @@ function CameraFeed() {
         : new Date(cameraData.updatedAt).getTime())
     : null;
 
-  const isOnline = !!cameraData?.imageBase64 && !!updatedAtMs && (now - updatedAtMs < OFFLINE_THRESHOLD_MS);
   const lastUpdatedText = updatedAtMs ? new Date(updatedAtMs).toLocaleString() : 'Never';
 
   // Group captured frames into delivery sessions (by sessionId from the camera).
@@ -131,9 +121,6 @@ function CameraFeed() {
           <div className="card-enter vault-card-animate" style={styles.cameraCard}>
             <div style={styles.cameraHeader}>
               <span style={styles.cameraTitle}>LogiBox Vault Camera</span>
-              <span style={{ ...styles.badge, ...(isOnline ? styles.liveBadge : styles.offlineBadge) }}>
-                {isOnline ? 'Live' : 'Offline'}
-              </span>
             </div>
 
             {cameraData?.imageBase64 ? (
@@ -301,21 +288,6 @@ const styles = {
     fontSize: '1rem',
     fontWeight: 700,
     color: '#1f2937',
-  },
-  badge: {
-    padding: '0.25rem 0.75rem',
-    borderRadius: '9999px',
-    fontSize: '0.7rem',
-    fontWeight: 700,
-    textTransform: 'uppercase',
-  },
-  liveBadge: {
-    backgroundColor: '#d1fae5',
-    color: '#059669',
-  },
-  offlineBadge: {
-    backgroundColor: '#f4f5f7',
-    color: '#6b7280',
   },
   videoWrap: {
     aspectRatio: '16/9',
