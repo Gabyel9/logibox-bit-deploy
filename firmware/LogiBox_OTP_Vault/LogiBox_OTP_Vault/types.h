@@ -23,6 +23,9 @@ struct LockState {
   bool parcelDetectedDuringUnlock;
   unsigned long unlockedAt;
   unsigned long parcelRemovedSince;   // millis() when IR first went empty (0 = not pending)
+  bool remoteSession;                 // opened by a dashboard remote-open command
+                                      // (collect-and-close flow: reed switch only,
+                                      // no parcel/cash-pod stages)
 };
 
 // ─── Cash Pod Phase (PCA9685 servo trapdoor) ───
@@ -60,6 +63,13 @@ typedef struct {
   int  resultCode;
   char resultBody[512];
 } NetMsg;
+
+// ─── Remote Unlock Commands ───
+// Handed over by the network task's /api/device-poll call; the main loop
+// drains them (netCmdQueue) because it owns locks[] and the LCD.
+struct RemoteCmd {
+  char vaultId[4];   // "1".."3", NUL-terminated
+};
 
 // ─── Screen State Machine ───
 enum ScreenState {

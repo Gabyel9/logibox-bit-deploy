@@ -11,6 +11,19 @@
 #define FUNCTION_URL   "https://logibox-bit-deploy-3xzd.vercel.app/api/device-verify-otp"
 #define EVENT_FUNCTION_URL "https://logibox-bit-deploy-3xzd.vercel.app/api/device-event"
 
+// ─── Remote Unlock (dashboard "Confirm & Open Vault") ───
+// When the owner confirms a collection on the website, the server queues an
+// open_vault command that this keypad picks up on its next poll: the solenoid
+// releases, the recipient collects the parcel, and the re-close (or an
+// IR-aware failsafe) reports remote_collection_done / auto_locked back.
+// Requires ENABLE_SOLENOID_LOCKS (and is most useful with reed switches).
+#define ENABLE_REMOTE_UNLOCK        1
+#define POLL_FUNCTION_URL  "https://logibox-bit-deploy-3xzd.vercel.app/api/device-poll"
+#define DEVICE_POLL_INTERVAL_MS     3000UL
+// FreeRTOS queue carrying polled commands from the network task to the main
+// loop, which owns the lock state machine and the LCD.
+#define NET_CMD_QUEUE_SIZE          4
+
 // ─── Vaults ───
 #define NUM_VAULTS     3
 

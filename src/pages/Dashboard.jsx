@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
@@ -40,8 +40,16 @@ const ALLOWED_VAULT_FIELDS = [
   'id', 'status', 'enabled',
   'receiverName', 'contactNumber', 'parcelInfo', 'deliveryFee', 'createdAt',
   'otp', 'otpHash', 'otpEncrypted', 'otpStatus', 'otpCreatedAt', 'otpExpiresAt',
-  'lastOtpGeneratedAt', 'completedAt'
+  'lastOtpGeneratedAt', 'completedAt',
+  // Remote unlock (device/server-written; listed so full-doc setDoc writes
+  // never strip them mid-session)
+  'remoteOpenRequestedAt', 'remoteOpenStatus'
 ];
+
+// How long to wait for the keypad to confirm a remote open before telling
+// the user the device didn't respond (server-side command TTL is 30s, so a
+// command can never fire after this deadline anyway).
+const REMOTE_OPEN_WAIT_MS = 20000;
 
 // Clean vault object to only include allowed fields for Firestore security rules
 const cleanVaultForFirestore = (vault) => {
@@ -112,6 +120,11 @@ function Dashboard() {
   const [vaultOTPs, setVaultOTPs] = useState({});
   const [confirmLoading, setConfirmLoading] = useState(false);
   const [confirmError, setConfirmError] = useState(null);
+  // Vault id whose remote open we're waiting on (null = not waiting).
+  const [pendingOpenVaultId, setPendingOpenVaultId] = useState(null);
+  // Absolute deadline captured when the wait starts so Firestore snapshots
+  // can't keep restarting the timeout.
+  const openWaitDeadlineRef = useRef(null);
 
   useTick();
 
@@ -528,53 +541,103 @@ function Dashboard() {
 
   const openConfirmWarningModal = (vault) => {
     setSelectedVault(vault);
+    setConfirmError(null);
     setShowWarningModal(true);
   };
 
-  const handleConfirmWithWarning = async () => {
+  // Closing the warning modal must also stop watching for the open. The
+  // already-queued command can't be revoked, but the UI gives up cleanly.
+  const closeWarningModal = () => {
     setShowWarningModal(false);
+    setConfirmLoading(false);
+    setConfirmError(null);
+    setPendingOpenVaultId(null);
+    openWaitDeadlineRef.current = null;
+  };
+
+  const handleConfirmWithWarning = async () => {
+    if (!selectedVault) return;
+    const vaultId = selectedVault.id.toString();
+
     setConfirmLoading(true);
     setConfirmError(null);
 
-    // Normalize the vault: clear leftover OTP fields so a confirmed delivery
-    // can't leave a hybrid status/otpStatus behind. Recovery back to 'empty'
-    // is handled by the completed-vault watchdog effect.
-    const updatedVault = cleanVaultForFirestore({
-      ...selectedVault,
-      status: 'completed',
-      completedAt: new Date().toISOString(),
-      otp: null,
-      otpHash: null,
-      otpEncrypted: null,
-      otpStatus: null,
-      otpCreatedAt: null,
-      otpExpiresAt: null,
-      lastOtpGeneratedAt: null,
-    });
+    // Audit first: even if the API call fails, the request attempt is on
+    // record. Logging must never block the open itself.
+    try {
+      await logActivity(
+        'Remote Unlock Requested',
+        `Remote unlock requested for vault ${vaultId}`,
+        selectedVault.id
+      );
+    } catch (logError) {
+      console.error('Activity log write failed:', logError);
+    }
 
     try {
-      await setDoc(
-        doc(db, 'users', user.uid, 'vaults', selectedVault.id.toString()),
-        updatedVault
-      );
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) throw new Error('Not signed in');
 
-      // Activity logging must never block vault recovery.
-      try {
-        await logActivity(
-          'Delivery Confirmed',
-          `Delivery confirmed for vault ${selectedVault.id}`,
-          selectedVault.id
-        );
-      } catch (logError) {
-        console.error('Activity log write failed:', logError);
+      const res = await fetch('/api/vault-unlock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vaultId, idToken }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Failed to queue the unlock command.');
       }
+
+      // Command is queued (30s server-side TTL). Keep the modal open and
+      // loading until the keypad confirms - via remoteOpenStatus='active'
+      // or a direct status jump to 'completed' (IR beam already empty) -
+      // or the deadline expires.
+      openWaitDeadlineRef.current = Date.now() + REMOTE_OPEN_WAIT_MS;
+      setPendingOpenVaultId(selectedVault.id);
     } catch (error) {
-      console.error('Confirm delivery failed:', error);
-      setConfirmError('Failed to confirm delivery. Please try again.');
-    } finally {
+      console.error('Remote unlock failed:', error);
+      setConfirmError(error.message || 'Failed to open the vault. Please try again.');
       setConfirmLoading(false);
     }
   };
+
+  // Watch the vault until the keypad confirms the open (remoteOpenStatus
+  // becomes 'active', or the vault jumps straight to 'completed' when the
+  // IR beam was already empty) or the 20s deadline passes. The deadline is
+  // captured once so incoming Firestore snapshots can't restart the timer.
+  useEffect(() => {
+    if (pendingOpenVaultId === null) return undefined;
+
+    const deadline = openWaitDeadlineRef.current ?? Date.now() + REMOTE_OPEN_WAIT_MS;
+
+    const succeed = () => {
+      setPendingOpenVaultId(null);
+      openWaitDeadlineRef.current = null;
+      setConfirmLoading(false);
+      setConfirmError(null);
+      setShowWarningModal(false);
+    };
+    const fail = () => {
+      setPendingOpenVaultId(null);
+      openWaitDeadlineRef.current = null;
+      setConfirmLoading(false);
+      setConfirmError('Vault did not open — the device may be offline.');
+    };
+
+    const vault = vaults.find(v => v.id === pendingOpenVaultId);
+    const confirmed = !!vault &&
+      (vault.remoteOpenStatus === 'active' || vault.status === 'completed');
+
+    // The timer is re-armed on every snapshot but always targets the
+    // original deadline (or 0ms once the device has confirmed), so incoming
+    // snapshots can neither restart nor extend the wait.
+    const timer = setTimeout(
+      confirmed ? succeed : fail,
+      confirmed ? 0 : Math.max(0, deadline - Date.now())
+    );
+    return () => clearTimeout(timer);
+  }, [pendingOpenVaultId, vaults]);
 
   const handleCopyOTP = () => {
     if (!currentOTP || otpTimeRemaining <= 0) return;
@@ -947,15 +1010,19 @@ function Dashboard() {
 
                             {vault.status === 'occupied' && (
                               <div style={{
-                                backgroundColor: '#ede9fe',
+                                backgroundColor: vault.remoteOpenStatus === 'active' ? '#dcfce7' : '#ede9fe',
                                 borderRadius: 10,
                                 padding: '0.875rem',
                                 textAlign: 'center',
-                                color: '#7c3aed',
+                                color: vault.remoteOpenStatus === 'active' ? '#166534' : '#7c3aed',
                                 fontWeight: 700,
                                 fontSize: '0.875rem',
                               }}>
-                                Parcel inside — waiting for recipient to collect
+                                {pendingOpenVaultId === vault.id
+                                  ? 'Opening vault…'
+                                  : vault.remoteOpenStatus === 'active'
+                                    ? 'Vault open — collect the parcel and close the door'
+                                    : 'Parcel inside — waiting for recipient to collect'}
                               </div>
                             )}
                           </div>
@@ -970,13 +1037,15 @@ function Dashboard() {
                                 Reset
                               </button>
                             )}
-                            <button
-                              className="btn-animate"
-                              style={{ ...styles.confirmBtn, minHeight: 44 }}
-                              onClick={() => openConfirmWarningModal(vault)}
-                            >
-                              Confirm Delivery
-                            </button>
+                            {vault.status === 'occupied' && (
+                              <button
+                                className="btn-animate"
+                                style={{ ...styles.confirmBtn, minHeight: 44 }}
+                                onClick={() => openConfirmWarningModal(vault)}
+                              >
+                                Confirm Delivery
+                              </button>
+                            )}
                           </div>
 
                           {vault.createdAt && (
@@ -1384,7 +1453,7 @@ function Dashboard() {
               </div>
               <h3 style={{ ...styles.modalTitle, textAlign: 'center' }}>Warning</h3>
               <p style={{ ...styles.warningText, marginBottom: '0.5rem' }}>
-                The vault will open automatically. Please confirm that <span style={{ color: '#8B0000', fontWeight: 700 }}>you are physically present</span> at the vault — do not confirm on behalf of the rider.
+                The vault will open automatically. Please confirm that <span style={{ color: '#8B0000', fontWeight: 700 }}>you are physically present</span> at the vault.
               </p>
               {confirmError && (
                 <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '0.75rem', color: '#dc2626', fontSize: '0.875rem', textAlign: 'center' }}>
@@ -1397,9 +1466,9 @@ function Dashboard() {
                 onClick={handleConfirmWithWarning}
                 disabled={confirmLoading}
               >
-                {confirmLoading ? 'Processing...' : 'Confirm & Open Vault'}
+                {confirmLoading ? 'Opening vault…' : 'Confirm & Open Vault'}
               </button>
-              <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44, width: '100%' }} onClick={() => setShowWarningModal(false)}>
+              <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44, width: '100%' }} onClick={closeWarningModal}>
                 Cancel
               </button>
             </div>
@@ -1409,7 +1478,7 @@ function Dashboard() {
             <div className="modal-content-enter" style={{ ...styles.modal, maxWidth: 400 }}>
               <div style={styles.modalHeader}>
                 <h3 style={styles.modalTitle}>Warning</h3>
-                <button className="btn-animate" style={styles.closeBtn} onClick={() => setShowWarningModal(false)}>
+                <button className="btn-animate" style={styles.closeBtn} onClick={closeWarningModal}>
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
                   </svg>
@@ -1433,7 +1502,7 @@ function Dashboard() {
                 </div>
               </div>
               <div style={{ ...r.modalFooter, flexDirection: 'column' }}>
-                <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44 }} onClick={() => setShowWarningModal(false)}>
+                <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44 }} onClick={closeWarningModal}>
                   Cancel
                 </button>
                 <button
@@ -1442,7 +1511,7 @@ function Dashboard() {
                   onClick={handleConfirmWithWarning}
                   disabled={confirmLoading}
                 >
-                  {confirmLoading ? 'Processing...' : 'Confirm & Open Vault'}
+                  {confirmLoading ? 'Opening vault…' : 'Confirm & Open Vault'}
                 </button>
               </div>
             </div>

@@ -43,8 +43,32 @@ const EVENT_HANDLERS = {
     action: 'Delivery Aborted - No Parcel Detected',
   },
   auto_locked: {
-    update: { deliveryInProgress: false },
+    // Also clears the remote-open markers: if a dashboard-initiated session
+    // hit the 30s failsafe (or any other forced re-lock), the website's
+    // "collecting" badge must come down and a new unlock must be allowed.
+    update: { deliveryInProgress: false, remoteOpenStatus: null, remoteOpenRequestedAt: null },
     action: 'Vault Auto-Locked',
+  },
+  // --- Remote open (dashboard "Confirm & Open Vault") ---
+  remote_opened: {
+    // The keypad picked up the open_vault command and released the solenoid.
+    // The website watches this field to confirm the door actually opened.
+    update: { remoteOpenStatus: 'active' },
+    action: 'Vault Opened Remotely',
+  },
+  remote_collection_done: {
+    // Door re-closed after a remote session (or the failsafe fired with the
+    // IR beam already empty). Parcel collected -> the vault is finished;
+    // 'completed' hands off to the dashboard's existing auto-reset watchdog,
+    // which clears the document back to a clean 'empty' vault.
+    update: {
+      status: 'completed',
+      completedAt: () => new Date().toISOString(),
+      deliveryInProgress: false,
+      remoteOpenStatus: null,
+      remoteOpenRequestedAt: null,
+    },
+    action: 'Collection Complete',
   },
 };
 

@@ -30,6 +30,8 @@ const DEVICE_EVENT_TEXT = {
   door_closed_locked: 'parcel delivered and vault locked securely',
   no_parcel: 'door closed with no parcel, nothing was stored',
   auto_locked: 'auto-locked on timeout, no delivery recorded',
+  remote_opened: 'vault opened remotely from the dashboard',
+  remote_collection_done: 'parcel collected, vault locked and ready',
 };
 
 const humanizeLogDetails = (log) => {

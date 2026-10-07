@@ -77,7 +77,36 @@ Nothing cancels silently — every case logs to **Activity Logs**:
 out the 60-second button cooldown if needed) and start again. The vault re-arms
 cleanly — no reset needed.
 
-## 6. View the evidence
+## 6. Collect a parcel (Confirm & Open Vault)
+
+When a delivery is locked in, the vault shows **Occupied — Parcel inside**.
+Collecting it is a remote open you trigger from the Dashboard:
+
+1. Go to the **Occupied** vault and click **Confirm Delivery**.
+2. Read the warning and click **Confirm & Open Vault** — only do this when you
+   (or whoever is collecting) are **physically at the vault**.
+3. The app waits up to ~20 seconds for the keypad to confirm. While it waits
+   the vault shows *Opening vault…*; when the door releases it switches to
+   *Vault open — collect the parcel and close the door*.
+4. The keypad LCD shows **"Vault N unlocked / Collect & close"**. Take the
+   parcel out and **shut the door** — the lock re-engages and the vault
+   completes, then resets to **Empty** by itself.
+
+**Rules that matter:**
+
+- **No camera and no cash pod** run during a remote open — this is a pure
+  collection, not a delivery.
+- If the keypad doesn't answer (*"Vault did not open — the device may be
+  offline"*), check that the device has power and WiFi, wait a moment, and
+  confirm again.
+- **30-second safety window:** if the door is never shut, the vault force-locks
+  after 30 s. With the parcel still inside it stays **Occupied** (you can simply
+  confirm again); with the parcel already removed the collection counts as done.
+- Server safety cap: at most **5 remote unlocks per 10 minutes** per vault.
+- Every attempt is logged: *Remote Unlock Requested* → *Vault Opened Remotely*
+  → *Collection Complete* (or *Vault Auto-Locked*).
+
+## 7. View the evidence
 
 - **Camera Feed** (`/camera`) — all capture sessions tagged by vault. Frames are
   normally shot every ~3 seconds while a delivery is in progress and stop when
@@ -86,7 +115,7 @@ cleanly — no reset needed.
   verifications, lockouts, resets. Use this to see exactly what happened for any
   vault at any time.
 
-## 7. Good to know
+## 8. Good to know
 
 - **Fail-safe by design:** power loss, WiFi loss, or a device crash always leaves
   every door locked and every cash pod closed. A reboot snaps the pods back to

@@ -68,11 +68,14 @@ resets the code before it's used; the new code replaces the old.
               /dashboard etc.                   LogiBox_OTP_Vault.ino
                      |                                   |
                      | Firebase Auth/Firestore          | /api/device-verify-otp
+                     | /api/vault-unlock (remote open)  | /api/device-poll (commands)
                      v                                   v
              Vercel serverless API  <---------------------'
         /api/generate-otp
+        /api/vault-unlock
         /api/device-verify-otp
         /api/device-event
+        /api/device-poll
         /api/camera-upload
                      |                        |
                      v                        v
@@ -81,12 +84,14 @@ resets the code before it's used; the new code replaces the old.
              devices/{deviceId}            ^   ^
                      |                        |   |
                      +-- keypad ESP32 sends staged events -------------+
+                     +-- keypad ESP32 polls /api/device-poll for opens +
                      +-- ESP32-CAM uploads frames -> /api/camera-upload
 ```
 
 - **Keypad ESP32** (`firmware/LogiBox_OTP_Vault/`) — the vault brain: OTP entry +
   verification, solenoid locks, IR parcel sensors, reed door sensors, cash pod
-  servos, camera start/stop over LAN HTTP.
+  servos, camera start/stop over LAN HTTP, plus remote-unlock commands polled
+  from the dashboard's "Confirm & Open Vault".
 - **ESP32-CAM** (`firmware/LogiBox_ESP32CAM/`) — captures delivery-evidence
   frames (~3 s interval) and uploads them to the app. Discovered over mDNS
   (`logiboxcam.local`).

@@ -28,6 +28,17 @@
   (LogiBox_ESP32CAM.ino) to start/stop capturing via a LAN HTTP call.
   The captured frames are stored in the web app as delivery evidence.
 
+  REMOTE UNLOCK (dashboard "Confirm & Open Vault"): the network task polls
+  /api/device-poll every few seconds while idle. A queued open_vault
+  command releases the vault's solenoid so an awaiting recipient can collect
+  a parcel already sitting in the vault - NO camera session and NO cash pod
+  are involved. The main loop then tracks the reed switch: door re-closed =
+  remote_collection_done (vault completes and the website auto-resets it);
+  at the 30s failsafe an EMPTY IR beam also completes the collection, while
+  a blocked beam reports auto_locked so the vault stays occupied and can be
+  confirmed again. While a remote session is on, the LCD shows "Collect &
+  close" instead of the rider delivery hints. See USER_GUIDE.md.
+
   NON-BLOCKING ARCHITECTURE:
   All network work (camera commands, OTP verification) runs in a FreeRTOS
   task pinned to core 0, fed through a request queue. The main loop never
@@ -116,7 +127,7 @@ const byte RELAY_OFF_LEVEL = HIGH;
 const byte RELAY_ON_LEVEL  = HIGH;
 const byte RELAY_OFF_LEVEL = LOW;
 #endif
-LockState locks[NUM_VAULTS] = {{false, false, false, 0, 0}, {false, false, false, 0, 0}, {false, false, false, 0, 0}};
+LockState locks[NUM_VAULTS] = {{false, false, false, 0, 0, false}, {false, false, false, 0, 0, false}, {false, false, false, 0, 0, false}};
 #endif
 
 // ---------------- Cash Pod Servos (PCA9685 + MG996R) ----------------
@@ -166,6 +177,14 @@ ParcelState parcels[NUM_VAULTS] = {{false, false, 0}, {false, false, 0}, {false,
 QueueHandle_t netReqQueue;
 QueueHandle_t netResultQueue;
 TaskHandle_t networkTaskHandle = NULL;
+
+// Remote unlock: polled open_vault commands travel network task -> main loop
+// (the main loop owns locks[] and the LCD). Created in setup().
+#if ENABLE_REMOTE_UNLOCK && ENABLE_SOLENOID_LOCKS
+QueueHandle_t netCmdQueue;
+// Throttle for /api/device-poll; only touched inside the network task.
+unsigned long lastPollAt = 0;
+#endif
 
 // Camera IP cache (used only inside the network task)
 IPAddress cachedCamIP;
@@ -415,6 +434,9 @@ void setup() {
   // FreeRTOS queues and network task
   netReqQueue = xQueueCreate(NET_REQ_QUEUE_SIZE, sizeof(NetMsg));
   netResultQueue = xQueueCreate(NET_RES_QUEUE_SIZE, sizeof(NetMsg));
+#if ENABLE_REMOTE_UNLOCK && ENABLE_SOLENOID_LOCKS
+  netCmdQueue = xQueueCreate(NET_CMD_QUEUE_SIZE, sizeof(RemoteCmd));
+#endif
   xTaskCreatePinnedToCore(networkTask, "network", NET_TASK_STACK_SIZE, NULL, 1, &networkTaskHandle, 0);
 
   // Restore lockout state from NVS
@@ -446,6 +468,9 @@ void loop() {
 #endif
 
   checkNetworkResults();
+#if ENABLE_REMOTE_UNLOCK && ENABLE_SOLENOID_LOCKS
+  checkRemoteCommands();
+#endif
   checkFlashMessage();
   updateScrolling();
   updateVerifyingScreen();
@@ -512,6 +537,13 @@ void networkTask(void* param) {
         default:
           break;
       }
+    } else {
+      // Queue idle: this is the ONLY place /api/device-poll runs, so a poll
+      // can never preempt camera/OTP/event traffic (the switch above runs
+      // to completion before we get back here).
+#if ENABLE_REMOTE_UNLOCK && ENABLE_SOLENOID_LOCKS
+      pollCommandsInternal();
+#endif
     }
   }
 }
@@ -999,6 +1031,7 @@ void unlockVault(int vaultIndex) {
   locks[vaultIndex].doorOpenedDuringUnlock = false;
   locks[vaultIndex].parcelDetectedDuringUnlock = false;
   locks[vaultIndex].parcelRemovedSince = 0;
+  locks[vaultIndex].remoteSession = false;   // OTP flow clears any stale remote flag
   locks[vaultIndex].unlockedAt = millis();
   digitalWrite(RELAY_PINS[vaultIndex], RELAY_ON_LEVEL);
   Serial.print("Vault ");
@@ -1009,6 +1042,7 @@ void unlockVault(int vaultIndex) {
 void relockVault(int vaultIndex) {
   if (vaultIndex < 0 || vaultIndex >= NUM_VAULTS) return;
   locks[vaultIndex].unlocked = false;
+  locks[vaultIndex].remoteSession = false;
   digitalWrite(RELAY_PINS[vaultIndex], RELAY_OFF_LEVEL);
   Serial.print("Vault ");
   Serial.print(vaultIndex + 1);
@@ -1038,6 +1072,59 @@ int firstUnlockedVaultIndex() {
   return -1;
 }
 
+// ---------------- Remote Unlock (dashboard-initiated) ----------------
+// Commands are polled from /api/device-poll by the network task and queued;
+// everything here runs on the main loop so the LCD and lock state machine
+// stay on one task.
+
+#if ENABLE_REMOTE_UNLOCK
+
+// Drain every queued command. Called from loop().
+void checkRemoteCommands() {
+  RemoteCmd cmd;
+  while (xQueueReceive(netCmdQueue, &cmd, 0) == pdPASS) {
+    handleRemoteCommand(cmd.vaultId);
+  }
+}
+
+// Execute a queued open_vault command (no camera session, no cash pod).
+void handleRemoteCommand(const char* vaultId) {
+  // Single-unlock invariant: at most one vault may be released at a time.
+  if (firstUnlockedVaultIndex() >= 0) {
+    Serial.println("Remote open skipped: a vault is already unlocked");
+    return;
+  }
+  // Never yank the UI out of a live keypad flow; the command expires
+  // server-side (30s TTL) if it never becomes safe to run.
+  if (currentState == VERIFYING || currentState == LOCKOUT ||
+      currentState == ENTER_OTP || currentState == DOOR_UNLOCKED) {
+    Serial.println("Remote open deferred: keypad busy");
+    return;
+  }
+
+  int idx = vaultIndexFromId(vaultId);
+  if (idx < 0) {
+    Serial.print("Remote open skipped: unknown vault ");
+    Serial.println(vaultId);
+    return;
+  }
+
+  // Collection happens WITHOUT a camera session: stop anything left running
+  // (e.g. a lingering RESULT-screen session) before opening the door.
+  requestCameraCommand(OP_STOP_CAMERA, "");
+
+  strcpy(selectedVault, vaultId);
+  unlockVault(idx);
+  locks[idx].remoteSession = true;   // after unlockVault, which clears it
+  requestEventReport("remote_opened", vaultId);
+  showScreen(DOOR_UNLOCKED);
+
+  Serial.print("Remote open: vault ");
+  Serial.println(vaultId);
+}
+
+#endif // ENABLE_REMOTE_UNLOCK
+
 // Re-lock policy: after a successful OTP the solenoid releases and walks the
 // rider through a 3-stage sequence enforced by the sensors:
 //   1. Pull the door open (reed switch reports OPEN)
@@ -1053,6 +1140,51 @@ void checkLockStates() {
 
     unsigned long elapsed = millis() - locks[i].unlockedAt;
     bool timedOut = elapsed >= UNLOCK_MAX_TIMEOUT_MS;
+
+#if ENABLE_REMOTE_UNLOCK
+    // Remote collection session (dashboard "Confirm & Open Vault"): a pure
+    // collect-and-close flow. The reed switch is the completion signal while
+    // the door is in use; the IR beam is consulted ONLY at the failsafe, to
+    // decide whether the parcel actually left the vault. No delivery stages,
+    // no cash pod.
+    if (locks[i].remoteSession) {
+      bool completed = false;
+      bool decideByParcel = false;
+
+#if ENABLE_REED_SWITCHES
+      if (!timedOut) {
+        if (!doors[i].closed) continue;   // door open - still collecting
+        completed = true;                 // door re-closed - collection done
+      } else {
+        decideByParcel = true;
+      }
+#else
+      // No door feedback: the failsafe window is the only decision point.
+      if (!timedOut) continue;
+      decideByParcel = true;
+#endif
+
+      if (decideByParcel) {
+#if ENABLE_IR_SENSORS
+        completed = !parcels[i].present;  // beam empty = parcel was removed
+#else
+        completed = true;
+#endif
+      }
+
+      relockVault(i);   // clears remoteSession
+      requestEventReport(completed ? "remote_collection_done" : "auto_locked",
+                         ALLOWED_VAULTS[i]);
+
+      if (currentState == DOOR_UNLOCKED) {
+        lastActivityTime = millis();
+        // auto_locked (parcel still inside at the failsafe) keeps the vault
+        // Occupied so the owner can simply confirm again.
+        flashLine(completed ? "Parcel collected" : "Auto-locked", 1500, SELECT_VAULT);
+      }
+      continue;
+    }
+#endif // ENABLE_REMOTE_UNLOCK
 
 #if ENABLE_REED_SWITCHES
     bool doorOpen = !doors[i].closed;
@@ -1180,6 +1312,13 @@ void showDoorUnlockedScreen() {
   lcd.print(" unlocked");
 
   lcd.setCursor(0, 1);
+  // Remote collection: the recipient just takes the parcel and shuts the
+  // door - none of the rider delivery hints apply.
+  int remoteIdx = vaultIndexFromId(selectedVault);
+  if (remoteIdx >= 0 && locks[remoteIdx].remoteSession) {
+    lcd.print("Collect & close");
+    return;
+  }
 #if ENABLE_REED_SWITCHES
   int idx = vaultIndexFromId(selectedVault);
   if (idx >= 0) {
@@ -1213,6 +1352,10 @@ void updateDoorUnlockedPrompt(int vaultIndex) {
   lcd.setCursor(0, 1);
   lcd.print("                ");
   lcd.setCursor(0, 1);
+  if (locks[vaultIndex].remoteSession) {
+    lcd.print("Collect & close");
+    return;
+  }
 #if ENABLE_IR_SENSORS
   if (locks[vaultIndex].parcelDetectedDuringUnlock) {
     lcd.print("Close door now");
@@ -1646,6 +1789,85 @@ void sendEventInternal(const char* event, const char* vaultId) {
 
   http.end();
 }
+
+// Poll /api/device-poll for queued commands (e.g. the dashboard's
+// "Confirm & Open Vault"). Runs ONLY inside the network task, only while its
+// request queue is idle, and only when the keypad isn't mid-flow - a command
+// that arrives at a busy moment simply stays pending server-side until its
+// 30s TTL or until the UI is free again. Commands are handed to the main
+// loop through netCmdQueue.
+#if ENABLE_REMOTE_UNLOCK && ENABLE_SOLENOID_LOCKS
+void pollCommandsInternal() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  // Pause while a keypad flow owns the UI; the server keeps the command
+  // pending (and expires it after 30s if it is never collected).
+  if (currentState == VERIFYING || currentState == LOCKOUT ||
+      currentState == ENTER_OTP || currentState == DOOR_UNLOCKED) {
+    return;
+  }
+
+  unsigned long now = millis();
+  if (now - lastPollAt < DEVICE_POLL_INTERVAL_MS) return;
+  lastPollAt = now;
+
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  HTTPClient http;
+  http.setTimeout(5000);
+
+  if (!http.begin(client, POLL_FUNCTION_URL)) {
+    Serial.println("Command poll: HTTP begin failed");
+    return;
+  }
+
+  http.addHeader("Content-Type", "application/json");
+
+  StaticJsonDocument<128> reqDoc;
+  reqDoc["deviceId"] = DEVICE_ID;
+  reqDoc["rssi"] = WiFi.RSSI();
+  char requestBody[128];
+  serializeJson(reqDoc, requestBody, sizeof(requestBody));
+
+  int httpCode = http.POST(requestBody);
+  if (httpCode != 200) {
+    // Heartbeats fail silently during outages; nothing to do.
+    Serial.print("Command poll -> HTTP ");
+    Serial.println(httpCode);
+    http.end();
+    return;
+  }
+
+  String respStr = http.getString();
+  http.end();
+
+  StaticJsonDocument<1024> resDoc;
+  if (deserializeJson(resDoc, respStr)) {
+    Serial.println("Command poll: bad JSON");
+    return;
+  }
+  if (!(resDoc["success"] | false)) return;
+
+  for (JsonObject cmd : resDoc["commands"].as<JsonArray>()) {
+    const char* type = cmd["type"] | "";
+    const char* vaultId = cmd["vaultId"] | "";
+    if (strcmp(type, "open_vault") != 0) continue;
+
+    RemoteCmd rc;
+    if (strlen(vaultId) == 0 || strlen(vaultId) >= sizeof(rc.vaultId)) continue;
+    strncpy(rc.vaultId, vaultId, sizeof(rc.vaultId) - 1);
+    rc.vaultId[sizeof(rc.vaultId) - 1] = '\0';
+
+    if (xQueueSend(netCmdQueue, &rc, 0) != pdPASS) {
+      Serial.println("Command queue full - remote command dropped");
+    } else {
+      Serial.print("Poll: queued open_vault for vault ");
+      Serial.println(rc.vaultId);
+    }
+  }
+}
+#endif // ENABLE_REMOTE_UNLOCK && ENABLE_SOLENOID_LOCKS
 
 IPAddress resolveCameraIPInternal() {
   if (camIpValid && millis() - camIpCachedAt < CAM_IP_CACHE_MS) {
