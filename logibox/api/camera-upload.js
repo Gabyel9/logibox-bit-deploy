@@ -148,12 +148,20 @@ export default async (req, res) => {
 
     const now = new Date();
 
-    // Dedupe: skip the write if the frame hasn't changed since the last upload.
+    // Dedupe: skip the write if the frame hasn't changed since the last upload
+    // IN THE SAME SESSION. Scoping to the session is essential: the first frame
+    // of a new delivery session can be visually identical to the last frame of
+    // the previous one (static scene), and a global hash compare would silently
+    // drop it - leaving the new session with zero stored frames.
     const cameraDoc = await cameraRef.get();
-    if (cameraDoc.exists && cameraDoc.data().lastHash === hash) {
-      // Device is still alive and uploading; just refresh its health stamp.
-      await deviceRef.set({ lastSeenAt: now }, { merge: true });
-      return res.status(200).json({ success: true, deduped: true });
+    if (cameraDoc.exists) {
+      const prev = cameraDoc.data();
+      const sameSession = (prev.sessionId ?? null) === (sessionId ?? null);
+      if (sameSession && prev.lastHash === hash) {
+        // Device is still alive and uploading; just refresh its health stamp.
+        await deviceRef.set({ lastSeenAt: now }, { merge: true });
+        return res.status(200).json({ success: true, deduped: true });
+      }
     }
 
     const frameIndex = (device.lastFrameIndex || 0) + 1;

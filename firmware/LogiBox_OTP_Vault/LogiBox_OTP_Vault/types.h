@@ -52,7 +52,8 @@ enum NetworkOp {
   OP_STOP_CAMERA,
   OP_VERIFY_OTP,
   OP_LOG_TAMPER,
-  OP_REPORT_EVENT
+  OP_REPORT_EVENT,
+  OP_CAMERA_STATUS
 };
 
 typedef struct {
@@ -80,6 +81,7 @@ enum ScreenState {
   RESULT,
   LOCKOUT,
   SHOW_STATUS,
+  CAMERA_CHECK,
   DOOR_UNLOCKED
 };
 

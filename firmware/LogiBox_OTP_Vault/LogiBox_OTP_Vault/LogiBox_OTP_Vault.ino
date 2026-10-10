@@ -531,6 +531,12 @@ void networkTask(void* param) {
           submitOtpInternal(msg.reqOtp, msg.reqVault, &msg);
           xQueueSend(netResultQueue, &msg, 0);
           break;
+        case OP_CAMERA_STATUS:
+          msg.resultCode = 0;
+          msg.resultBody[0] = '\0';
+          checkCameraStatusInternal(&msg);
+          xQueueSend(netResultQueue, &msg, 0);
+          break;
         case OP_REPORT_EVENT:
           sendEventInternal(msg.reqEvent, msg.reqVault);
           break;
@@ -548,11 +554,15 @@ void networkTask(void* param) {
   }
 }
 
-// Main loop side: consumes completed OTP verifications.
+// Main loop side: consumes completed OTP verifications and camera checks.
 void checkNetworkResults() {
   NetMsg msg;
   while (xQueueReceive(netResultQueue, &msg, 0) == pdPASS) {
-    handleOtpResult(msg.resultCode, msg.resultBody);
+    if (msg.op == OP_CAMERA_STATUS) {
+      handleCameraStatusResult(msg.resultCode, msg.resultBody);
+    } else {
+      handleOtpResult(msg.resultCode, msg.resultBody);
+    }
   }
 }
 
@@ -574,6 +584,38 @@ void handleOtpResult(int code, const char* body) {
   handleResponse(code, body);
 }
 
+// Main loop side: renders the ESP32-CAM connectivity check result. Cancel codes:
+//   -1 = keypad has no WiFi, -2 = mDNS did not find the camera, -3 = camera IP
+//   responded but the /status HTTP call failed. Anything else = reachable (OK).
+void handleCameraStatusResult(int code, const char* body) {
+  (void)body;   // connectivity-only result; status comes from the code
+  if (currentState != CAMERA_CHECK) return;   // stale result - user already left
+
+  const char* line0;
+  switch (code) {
+    case -1: line0 = "No WiFi";         break;
+    case -2: line0 = "Cam NOT found";   break;
+    case -3: line0 = "No response";     break;
+    default: line0 = "Cam OK";          break;
+  }
+
+  lcdClear();
+  lcd.setCursor(0, 0);
+  lcd.print(line0);
+  if (code == -2) {
+    // Actionable hint: the camera is not answering mDNS on this network.
+    lcd.setCursor(0, 1);
+    lcd.print("check WiFi/mDNS");
+  }
+
+  flashUntil = millis() + CAMERA_CHECK_RESULT_MS;
+  flashActive = true;
+  flashReturnTo = WELCOME;
+
+  Serial.print("Camera check: ");
+  Serial.println(line0);
+}
+
 void checkVerifyTimeout() {
   if (currentState == VERIFYING && millis() - verifyStartedAt >= VERIFY_TIMEOUT_MS) {
     lastResultSuccess = false;
@@ -588,7 +630,14 @@ void checkVerifyTimeout() {
 void handleKeyPress(char key) {
   switch (currentState) {
     case WELCOME:
-      showScreen(SELECT_VAULT);
+      // 'C' runs a connectivity check against the ESP32-CAM; any other key
+      // proceeds to vault selection as normal.
+      if (key == 'C') {
+        requestCameraStatus();
+        showScreen(CAMERA_CHECK);
+      } else {
+        showScreen(SELECT_VAULT);
+      }
       break;
 
     case SELECT_VAULT:
@@ -610,6 +659,12 @@ void handleKeyPress(char key) {
       break;
 
     case SHOW_STATUS:
+      showScreen(WELCOME);
+      break;
+
+    case CAMERA_CHECK:
+      // Any key dismisses the camera-check screen before the result timer
+      // expires and returns to WELCOME.
       showScreen(WELCOME);
       break;
 
@@ -639,7 +694,7 @@ void handleKeyPress(char key) {
 // SELECT_VAULT screen keys
 void handleSelectVaultKey(char key) {
   if (key == '*') {
-    requestCameraCommand(OP_STOP_CAMERA, "");
+    // showScreen(WELCOME) stops the camera (belt-and-braces session end).
     showScreen(WELCOME);
   } else if (isDigit(key)) {
     char vault[2] = {key, '\0'};
@@ -657,10 +712,10 @@ void handleSelectVaultKey(char key) {
 // ENTER_OTP screen keys
 void handleEnterOtpKey(char key) {
   if (key == '*') {
-    // Close the camera session started at vault selection (asymmetry fix).
-    requestCameraCommand(OP_STOP_CAMERA, "");
-    // Clear any half-typed OTP so leftover digits don't carry over if the
-    // same vault is re-picked and a new OTP is submitted.
+    // Close the camera session started at vault selection - showScreen()
+    // for SELECT_VAULT stops the camera. Clear any half-typed OTP so leftover
+    // digits don't carry over if the same vault is re-picked and a new OTP is
+    // submitted.
     otpInput[0] = '\0';
     showScreen(SELECT_VAULT);
   } else if (key == 'D') {
@@ -726,6 +781,11 @@ void showScreen(ScreenState state) {
       showWelcomeScreen();
       break;
     case SELECT_VAULT:
+      // End any active capture session when the UI returns to vault
+      // selection. SELECT_VAULT is the "between attempts" screen, so every
+      // new vault pick must start a FRESH camera session (empty sessionId)
+      // instead of reusing/relabelling the previous one. Mirrors WELCOME.
+      requestCameraCommand(OP_STOP_CAMERA, "");
       showSelectVaultScreen();
       break;
     case ENTER_OTP:
@@ -742,6 +802,9 @@ void showScreen(ScreenState state) {
       showLockoutScreen();
       break;
     case SHOW_STATUS:
+      break;
+    case CAMERA_CHECK:
+      showCameraCheckScreen();
       break;
     case DOOR_UNLOCKED:
       showDoorUnlockedScreen();
@@ -829,7 +892,15 @@ void showWelcomeScreen() {
   lcd.setCursor(0, 0);
   lcd.print("LogiBox Vault");
   lcd.setCursor(0, 1);
-  lcd.print("Press any key");
+  lcd.print("Any key  C=cam");
+}
+
+void showCameraCheckScreen() {
+  lcdClear();
+  lcd.setCursor(0, 0);
+  lcd.print("Checking cam...");
+  lcd.setCursor(0, 1);
+  lcd.print("Cancel: any key");
 }
 
 void showSelectVaultScreen() {
@@ -1611,6 +1682,7 @@ const char* stateToString(ScreenState state) {
     case RESULT: return "RESULT";
     case LOCKOUT: return "LOCKOUT";
     case SHOW_STATUS: return "SHOW_STATUS";
+    case CAMERA_CHECK: return "CAMERA_CHECK";
     case DOOR_UNLOCKED: return "DOOR_UNLOCKED";
     default: return "UNKNOWN";
   }
@@ -1696,6 +1768,23 @@ void requestCameraCommand(NetworkOp op, const char* vaultId) {
   msg.resultBody[0] = '\0';
   if (xQueueSend(netReqQueue, &msg, 0) != pdPASS) {
     Serial.println("Network queue full - camera command dropped");
+  }
+}
+
+// Fire-and-forget ESP32-CAM connectivity check. Enqueued like a camera
+// command; the result arrives back through netResultQueue and is rendered by
+// handleCameraStatusResult() on the main loop.
+void requestCameraStatus() {
+  NetMsg msg;
+  msg.op = OP_CAMERA_STATUS;
+  msg.reqVault[0] = '\0';
+  msg.reqVault[1] = '\0';
+  msg.reqOtp[0] = '\0';
+  msg.reqEvent[0] = '\0';
+  msg.resultCode = 0;
+  msg.resultBody[0] = '\0';
+  if (xQueueSend(netReqQueue, &msg, 0) != pdPASS) {
+    Serial.println("Network queue full - camera status dropped");
   }
 }
 
@@ -1888,6 +1977,50 @@ IPAddress resolveCameraIPInternal() {
     Serial.println("mDNS lookup failed - camera not found");
   }
   return ip;
+}
+
+// Runs on the network task. Connectivity check for the ESP32-CAM:
+//   1. WiFi present?
+//   2. mDNS finds "logiboxcam" (fresh resolve, not the 60s cache)?
+//   3. Camera's web server answers /status with HTTP 200?
+// Writes a result code + human message; the main loop renders it on the LCD.
+void checkCameraStatusInternal(NetMsg* msg) {
+  if (WiFi.status() != WL_CONNECTED) {
+    msg->resultCode = -1;
+    strcpy(msg->resultBody, "No WiFi");
+    return;
+  }
+
+  // Force a fresh resolution so the check reflects the camera's CURRENT state
+  // (e.g. it rebooted and took a new DHCP lease).
+  camIpValid = false;
+  IPAddress camIP = resolveCameraIPInternal();
+  if (camIP == IPAddress()) {
+    msg->resultCode = -2;
+    strcpy(msg->resultBody, "Cam not found");
+    return;
+  }
+
+  // Camera is advertising its hostname - confirm its web server answers.
+  HTTPClient http;
+  http.setTimeout(5000);
+
+  char url[64];
+  snprintf(url, sizeof(url), "http://%s:%d/status", camIP.toString().c_str(), CAMERA_PORT);
+  if (!http.begin(url)) {
+    msg->resultCode = -3;
+    strcpy(msg->resultBody, "No response");
+    return;
+  }
+
+  int httpCode = http.GET();
+  http.end();
+
+  msg->resultCode = (httpCode == 200) ? 0 : -3;
+  strcpy(msg->resultBody, (httpCode == 200) ? "Cam OK" : "No response");
+
+  Serial.print("Camera /status -> HTTP ");
+  Serial.println(httpCode);
 }
 
 // ---------------- OTP Submission ----------------

@@ -31,6 +31,10 @@
 #define CAMERA_MDNS_HOST  "logiboxcam"
 #define CAMERA_PORT       80
 
+// How long the "Cam OK / Cam not found / No WiFi / No response" camera-check
+// result stays on the LCD before returning to WELCOME (any key skips sooner).
+#define CAMERA_CHECK_RESULT_MS  4000UL
+
 // ─── LCD (I2C 16x2) ───
 #define LCD_SDA   21
 #define LCD_SCL   22
