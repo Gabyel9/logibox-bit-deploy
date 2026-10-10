@@ -892,7 +892,7 @@ void showWelcomeScreen() {
   lcd.setCursor(0, 0);
   lcd.print("LogiBox Vault");
   lcd.setCursor(0, 1);
-  lcd.print("Any key  C=cam");
+  lcd.print("Press any key");
 }
 
 void showCameraCheckScreen() {
@@ -1218,14 +1218,29 @@ void checkLockStates() {
     // the door is in use; the IR beam is consulted ONLY at the failsafe, to
     // decide whether the parcel actually left the vault. No delivery stages,
     // no cash pod.
+    //
+    // IMPORTANT: a close only counts as "collected" after the door was REALLY
+    // opened (doorOpenedDuringUnlock). Right after unlockVault() the door is
+    // still closed and was never opened - completing on that would relock the
+    // vault instantly (on/off flicker). So the lock holds until the recipient
+    // opens the door, or the UNLOCK_MAX_TIMEOUT_MS failsafe forces auto_locked.
     if (locks[i].remoteSession) {
       bool completed = false;
       bool decideByParcel = false;
 
 #if ENABLE_REED_SWITCHES
       if (!timedOut) {
-        if (!doors[i].closed) continue;   // door open - still collecting
-        completed = true;                 // door re-closed - collection done
+        if (!doors[i].closed) {
+          // Door actually open/moving now - remember it so a later re-close
+          // completes the collection, and keep the lock released.
+          locks[i].doorOpenedDuringUnlock = true;
+          continue;
+        }
+        // Door closed. If it was never opened this is the moment right after
+        // unlock - keep holding (the failsafe below auto-locks if the door is
+        // never opened). Only an open-then-close is a real collection.
+        if (!locks[i].doorOpenedDuringUnlock) continue;
+        completed = true;                 // door opened and re-closed - done
       } else {
         decideByParcel = true;
       }
