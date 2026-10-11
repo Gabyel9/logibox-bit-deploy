@@ -91,13 +91,32 @@ function CameraFeed() {
     setExpandedSession((prev) => (prev === key ? null : key));
   };
 
-  const downloadImage = (imageBase64, filename) => {
+  const triggerDownload = (href, filename) => {
     const a = document.createElement('a');
-    a.href = `data:image/jpeg;base64,${imageBase64}`;
+    a.href = href;
     a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+  };
+
+  const downloadImage = (imageBase64, filename) => {
+    // ESP32-CAM images are stored upside-down; bake the same 180° rotation
+    // the feed applies into the downloaded file so saved evidence matches.
+    const src = `data:image/jpeg;base64,${imageBase64}`;
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.rotate(Math.PI);
+      ctx.drawImage(img, -canvas.width / 2, -canvas.height / 2);
+      triggerDownload(canvas.toDataURL('image/jpeg', 0.92), filename);
+    };
+    img.onerror = () => triggerDownload(src, filename);
+    img.src = src;
   };
 
   const formatSessionStart = (ms) => (ms ? new Date(ms).toLocaleString() : 'Unknown');

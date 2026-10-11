@@ -54,6 +54,14 @@ const humanizeLogDetails = (log) => {
     return `${vault}— wrong code entered${suffix}`;
   }
 
+  // Device entered lockout (api/device-verify-otp.js "Device Locked Out").
+  if (log.action === 'Device Locked Out') {
+    const id = details.match(/device (\S+)/)?.[1];
+    const source = id ? DEVICE_LABELS[id] || id : '';
+    const minutes = details.match(/(\d+) minutes/)?.[1] || '';
+    return `${vault}— device locked out${minutes ? ` (${minutes} min)` : ''}${source ? ` · ${source}` : ''}`;
+  }
+
   const slug = details.match(/event '([^']+)'/)?.[1];
   if (slug) {
     return `${vault}— ${DEVICE_EVENT_TEXT[slug] || slug}${suffix}`;
@@ -118,6 +126,7 @@ function ActivityLogs() {
     if (action === 'Vault Assigned') return '#3b82f6';
     if (action === 'OTP Generated') return '#f97316';
     if (action === 'Delivery Confirmed') return '#ef4444';
+    if (action === 'Device Locked Out') return '#ef4444';
     if (action === 'Vault Reset') return '#9ca3af';
     return '#9ca3af';
   };

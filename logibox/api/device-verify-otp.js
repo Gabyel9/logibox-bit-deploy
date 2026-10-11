@@ -132,19 +132,37 @@ async function recordDeviceFailedAttempt(deviceId) {
       attempts: [newAttempt],
       createdAt: new Date(),
     });
-  } else {
-    const data = rateLimitDoc.data();
-    const attempts = data.attempts || [];
-    const windowStart = new Date(now - RATE_LIMIT_WINDOW_MS);
-
-    const recentAttempts = attempts.filter(t => t.timestamp && t.timestamp.toDate && t.timestamp.toDate() > windowStart);
-    recentAttempts.push(newAttempt);
-
-    await rateLimitDocRef.update({
-      attempts: recentAttempts,
-      updatedAt: new Date(),
-    });
+    return 1;
   }
+
+  const data = rateLimitDoc.data();
+  const attempts = data.attempts || [];
+  const windowStart = new Date(now - RATE_LIMIT_WINDOW_MS);
+
+  const recentAttempts = attempts.filter(t => t.timestamp && t.timestamp.toDate && t.timestamp.toDate() > windowStart);
+  recentAttempts.push(newAttempt);
+
+  await rateLimitDocRef.update({
+    attempts: recentAttempts,
+    updatedAt: new Date(),
+  });
+  return recentAttempts.length;
+}
+
+/**
+ * Logs a single "Device Locked Out" activity row the instant a device crosses
+ * MAX_OTP_ATTEMPTS (5). Keys off === so exactly one row is written per
+ * 15-minute incident. The keypad enters its own local lockout on that same
+ * 5th failure (config.h LOCAL_FAIL_THRESHOLD == 5), so this mirrors the
+ * hardware lockout 1:1 without any firmware changes.
+ */
+async function logDeviceLockout(ownerUid, deviceId, vaultId) {
+  await db.collection(`users/${ownerUid}/activityLogs`).add({
+    action: 'Device Locked Out',
+    details: `Vault ${vaultId} locked out - device ${deviceId} failed ${MAX_OTP_ATTEMPTS} OTP attempts, keypad disabled for ${RATE_LIMIT_WINDOW_MS / 60000} minutes`,
+    vaultId: parseInt(vaultId),
+    timestamp: new Date(),
+  });
 }
 
 /**
@@ -235,7 +253,10 @@ export default async (req, res) => {
 
     // STEP 4 — Check OTP status is active
     if (vault.otpStatus !== 'active') {
-      await recordDeviceFailedAttempt(deviceId);
+      const failedCount = await recordDeviceFailedAttempt(deviceId);
+      if (failedCount === MAX_OTP_ATTEMPTS) {
+        await logDeviceLockout(ownerUid, deviceId, vaultId);
+      }
       return res.status(400).json({ success: false, message: 'OTP is not active' });
     }
 
@@ -244,7 +265,10 @@ export default async (req, res) => {
     const expiresAt = new Date(vault.otpExpiresAt).getTime();
 
     if (now >= expiresAt) {
-      await recordDeviceFailedAttempt(deviceId);
+      const failedCount = await recordDeviceFailedAttempt(deviceId);
+      if (failedCount === MAX_OTP_ATTEMPTS) {
+        await logDeviceLockout(ownerUid, deviceId, vaultId);
+      }
       await vaultRef.update({ otpStatus: 'expired' });
       return res.status(400).json({ success: false, message: 'OTP has expired' });
     }
@@ -254,7 +278,7 @@ export default async (req, res) => {
 
     if (hash !== vault.otpHash) {
       // Record failed attempt for device rate limiting
-      await recordDeviceFailedAttempt(deviceId);
+      const failedCount = await recordDeviceFailedAttempt(deviceId);
 
       // Log failed attempt
       await db.collection(`users/${ownerUid}/activityLogs`).add({
@@ -263,6 +287,11 @@ export default async (req, res) => {
         vaultId: parseInt(vaultId),
         timestamp: new Date(),
       });
+
+      // Lockout onset — the keypad locks itself on this same 5th failure.
+      if (failedCount === MAX_OTP_ATTEMPTS) {
+        await logDeviceLockout(ownerUid, deviceId, vaultId);
+      }
       return res.status(403).json({ success: false, message: 'Invalid OTP' });
     }
 
