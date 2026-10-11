@@ -985,10 +985,18 @@ function Dashboard() {
                                 </div>
                                 <button
                                   className="btn-animate"
-                                  style={{ ...styles.regenerateOtpBtn, minHeight: 44 }}
+                                  style={{
+                                    ...styles.regenerateOtpBtn,
+                                    minHeight: 44,
+                                    opacity: isOtpOnCooldown(vault.id) ? 0.5 : 1,
+                                    cursor: isOtpOnCooldown(vault.id) ? 'not-allowed' : 'pointer',
+                                  }}
+                                  disabled={isOtpOnCooldown(vault.id)}
                                   onClick={() => handleOpenOTPModal(vault)}
                                 >
-                                  Regenerate OTP
+                                  {isOtpOnCooldown(vault.id)
+                                    ? `Wait ${Math.ceil(getCooldownRemaining(vault.id) / 1000)}s`
+                                    : 'Regenerate OTP'}
                                 </button>
                               </>
                             )}
@@ -1000,10 +1008,18 @@ function Dashboard() {
                                 </div>
                                 <button
                                   className="btn-animate"
-                                  style={{ ...styles.regenerateOtpBtn, minHeight: 44 }}
+                                  style={{
+                                    ...styles.regenerateOtpBtn,
+                                    minHeight: 44,
+                                    opacity: isOtpOnCooldown(vault.id) ? 0.5 : 1,
+                                    cursor: isOtpOnCooldown(vault.id) ? 'not-allowed' : 'pointer',
+                                  }}
+                                  disabled={isOtpOnCooldown(vault.id)}
                                   onClick={() => handleOpenOTPModal(vault)}
                                 >
-                                  Regenerate OTP
+                                  {isOtpOnCooldown(vault.id)
+                                    ? `Wait ${Math.ceil(getCooldownRemaining(vault.id) / 1000)}s`
+                                    : 'Regenerate OTP'}
                                 </button>
                               </>
                             )}

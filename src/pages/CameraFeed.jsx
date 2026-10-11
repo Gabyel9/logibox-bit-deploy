@@ -128,6 +128,7 @@ function CameraFeed() {
                 <img
                   src={`data:image/jpeg;base64,${cameraData.imageBase64}`}
                   alt="LogiBox vault camera feed"
+                  className="camera-upright"
                   style={styles.video}
                 />
               </div>
@@ -188,6 +189,7 @@ function CameraFeed() {
                               <img
                                 src={`data:image/jpeg;base64,${frame.imageBase64}`}
                                 alt={`Frame ${frame.frameIndex ?? i + 1}`}
+                                className="camera-upright"
                                 style={styles.thumb}
                               />
                               <div style={styles.thumbFooter}>

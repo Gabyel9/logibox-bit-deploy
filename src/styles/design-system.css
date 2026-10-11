@@ -62,6 +62,9 @@ html, body {
   outline: none;
 }
 
+/* ── Camera feed orientation fix (ESP32-CAM mounts upside-down) ── */
+.camera-upright { transform: rotate(180deg); }
+
 /* ── Range slider ── */
 input[type=range] {
   -webkit-appearance: none;
