@@ -1,0 +1,209 @@
+================================================================================
+                    LOGIBOX - LAPTOP FLASHING QUICK-START
+================================================================================
+
+This guide makes a fresh laptop ready to compile and flash the LogiBox
+firmware by hand in the Arduino IDE, then walks through flashing both boards:
+
+  - Keypad ESP32   -> LogiBox_OTP_Vault.ino  (+ config.h + types.h)
+  - ESP32-CAM      -> LogiBox_ESP32CAM.ino
+
+Workflow: edit the code on the main PC, copy the firmware folder to the
+laptop, then flash manually with these steps.
+
+Do this setup ONCE per laptop. After that you only repeat Parts 3-4.
+
+
+================================================================================
+           PART 0 - WHAT TO COPY FROM THIS PC TO THE LAPTOP
+================================================================================
+
+KEYPAD (copy the WHOLE folder - it has 3 files):
+  firmware\LogiBox_OTP_Vault\LogiBox_OTP_Vault\
+     LogiBox_OTP_Vault.ino
+     config.h
+     types.h
+
+  The .ino does `#include "config.h"` and `#include "types.h"`, so copying
+  only the .ino will FAIL to compile. Keep the folder name exactly
+  "LogiBox_OTP_Vault" - Arduino requires the sketch folder name to match the
+  .ino file name.
+
+ESP32-CAM (single file is enough):
+  firmware\LogiBox_ESP32CAM\LogiBox_ESP32CAM\LogiBox_ESP32CAM.ino
+
+GOOD TO KNOW:
+  - WiFi credentials are NOT in the code. They are stored on each ESP32 in
+    NVS and SURVIVE re-flashing, so flashing does not wipe your network.
+  - Device identity (DEVICE_ID, FUNCTION_URL, etc.) is already set in the
+    copied files and matches the deployed web app + Firestore. Nothing to
+    edit before flashing.
+
+
+================================================================================
+           PART 1 - ONE-TIME LAPTOP SETUP
+================================================================================
+
+1. Install the Arduino IDE 2.x (https://www.arduino.cc/en/software).
+
+2. Add the ESP32 board package URL:
+     File -> Preferences -> "Additional Boards Manager URLs"
+     Paste:
+       https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+     (Add it on its own line if the field already has entries.)
+
+3. Install the ESP32 core:
+     Tools -> Board -> Boards Manager...
+     Search "esp32" -> install "esp32 by Espressif Systems".
+     RECOMMENDED VERSION: 2.0.17.
+     Version 3.x may break WiFiManager / the camera library, so stick to
+     2.0.17 unless you specifically need 3.x.
+
+4. Install the USB serial drivers:
+     - Keypad ESP32 (CP2102 chip): install the "CP210x Universal Windows
+       Driver" from silabs.com.
+     - ESP32-CAM USB-TTL adapter: install the driver for YOUR adapter chip -
+       CH340 (wch-ic.com) or FTDI (ftdichip.com).
+   After installing, plug the board in and confirm it appears as a COM port
+   in Device Manager and in the IDE's Port menu.
+
+
+================================================================================
+           PART 2 - INSTALL LIBRARIES (Library Manager)
+================================================================================
+
+Sketch -> Include Library -> Manage Libraries...  then search + install:
+
+  FOR THE KEYPAD ESP32:
+     [ ] Keypad                     (by Mark Stanley, Alexander Brevig)
+     [ ] LiquidCrystal I2C          (by Frank de Brabander)
+     [ ] ArduinoJson                (by Benoit Blanchon)   <-- REQUIRED by the keypad
+     [ ] WiFiManager                (by tablatronix)
+     [ ] Adafruit PWM Servo Driver  (by Adafruit)  (also pulls in Adafruit BusIO)
+
+  FOR THE ESP32-CAM:
+     [ ] esp32-camera               (by Espressif)
+     [ ] WiFiManager                (by tablatronix)
+
+  NOTE: ArduinoJson is a LIBRARY, not a config file. The keypad needs it
+  (it parses the verify-OTP response). The ESP32-CAM does NOT use ArduinoJson.
+
+
+================================================================================
+           PART 3 - FLASH THE KEYPAD ESP32
+================================================================================
+
+1. Plug the keypad ESP32 into the laptop with a USB cable.
+
+2. Open the sketch:
+     File -> Open -> LogiBox_OTP_Vault\LogiBox_OTP_Vault\LogiBox_OTP_Vault.ino
+   The config.h and types.h tabs must appear next to it.
+
+3. Settings (Tools menu):
+     Board:          ESP32 Dev Module
+     Upload Speed:   115200
+     Flash Size:     4MB (32Mb)   [default]
+     Port:           the CP2102 COM port
+
+4. Click Upload (the -> arrow).
+
+   IF THE UPLOAD WON'T CONNECT:
+     Hold the BOOT button, tap RESET (EN), then release BOOT as soon as the
+     IDE shows "Connecting........". Some boards also need the upload speed
+     dropped to 921600 or lower.
+
+5. Open Serial Monitor @ 115200 - you should see the boot splash, self-test,
+   and the WiFi result. On first run with no saved WiFi the LCD shows
+   "Join WiFi: LogiBoxKeypad" (portal AP "LogiBoxKeypad", http://192.168.4.1).
+
+
+================================================================================
+           PART 4 - FLASH THE ESP32-CAM
+================================================================================
+
+The ESP32-CAM has NO USB port, so flash it through a USB-TTL adapter.
+
+1. Wire the USB-TTL adapter to the ESP32-CAM:
+     USB-TTL TX   -> ESP32-CAM GPIO3 (RX)
+     USB-TTL RX   -> ESP32-CAM GPIO1 (TX)
+     USB-TTL GND  -> ESP32-CAM GND
+     USB-TTL 3.3V -> ESP32-CAM 3.3V
+
+2. Enter download (flash) mode:
+     Jumper GPIO0 to GND, THEN apply power / plug in the USB-TTL.
+     (Do NOT hold GPIO0 during normal power-on - that is flash mode.)
+
+3. Open the sketch:
+     File -> Open -> LogiBox_ESP32CAM\LogiBox_ESP32CAM\LogiBox_ESP32CAM.ino
+
+4. Settings (Tools menu):
+     Board:          AI Thinker ESP32-CAM
+     PSRAM:          Enabled
+     Flash Size:     4MB (32Mb)
+     Partition:      Huge APP (3MB No OTA/1MB SPIFFS)
+     Flash Mode:     QIO
+     Port:           the USB-TTL COM port
+
+5. Click Upload.
+
+6. When the upload finishes:
+     - Remove the GPIO0-to-GND jumper.
+     - Press the RESET button.
+     - Open Serial Monitor @ 115200.
+
+7. The serial log prints the assigned IP and the mDNS hostname
+   "logiboxcam". On first run with no saved WiFi it opens the portal AP
+   "LogiBoxCam" (http://192.168.4.1) - join it from a phone and pick the
+   same 2.4GHz network the keypad uses.
+
+
+================================================================================
+           PART 5 - VERIFY
+================================================================================
+
+  KEYPAD:
+     - Boot self-test completes, then WiFi connects (or the setup portal
+       appears on first run).
+
+  ESP32-CAM:
+     - Serial shows the IP + "logiboxcam.local".
+     - From a device on the same network open:  http://logiboxcam.local/status
+       Expect:  {"capturing":false,...}
+
+  Both devices MUST be on the SAME 2.4GHz network so the keypad can find the
+  camera by mDNS.
+
+
+================================================================================
+           PART 6 - TROUBLESHOOTING QUICK TABLE
+================================================================================
+
+  PROBLEM: No COM port shows up for the keypad
+  -> Install the CP210x driver, use a DATA-capable USB cable (not charge-only),
+     and try another USB port.
+
+  PROBLEM: Upload fails / "Failed to connect"
+  -> Keypad: hold BOOT, tap RESET, release BOOT at "Connecting...".
+     CAM: confirm GPIO0 is jumpered to GND BEFORE power is applied.
+     Lower the upload speed and retry.
+
+  PROBLEM: Compile error "ArduinoJson.h: No such file or directory"
+  -> The ArduinoJson library is not installed (Part 2). Same idea for
+     Keypad.h / WiFiManager.h / LiquidCrystal_I2C.h / Adafruit_PWMServoDriver.h.
+
+  PROBLEM: Compile error "config.h: No such file or directory"
+  -> You copied only the .ino. Copy the whole LogiBox_OTP_Vault folder and
+     open the .ino from inside it.
+
+  PROBLEM: CAM goes into boot loop / browns out
+  -> USB-TTL 3.3V can't supply enough current. Power the CAM from a stable
+     5V source while keeping GND + TX/RX on the adapter.
+
+  PROBLEM: Wrong board selected / "invalid header" after flash
+  -> Recheck the Tools settings in Part 3 (keypad) / Part 4 (CAM) exactly.
+
+  For full hardware wiring, calibration, and deeper troubleshooting see
+  SETUP_INSTRUCTIONS.txt. For moving the hardware to a new WiFi network see
+  MOVING_TO_NEW_WIFI.txt.
+
+================================================================================

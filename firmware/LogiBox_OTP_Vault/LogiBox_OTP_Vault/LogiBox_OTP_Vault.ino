@@ -1821,17 +1821,17 @@ void requestEventReport(const char* event, const char* vaultId) {
   }
 }
 
-void sendCameraCommandInternal(const char* command, const char* vaultId) {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("Camera command skipped: no WiFi");
-    return;
-  }
+// Sends one camera HTTP command (start/stop). Returns the HTTP response code,
+// 0 if the camera could not be resolved, or -1 if the request could not be sent.
+// Pass forceFreshResolve to bypass the 60s mDNS cache for this attempt.
+int attemptCameraCommandOnce(const char* command, const char* vaultId, bool forceFreshResolve) {
+  if (forceFreshResolve) camIpValid = false;
 
   IPAddress camIP = resolveCameraIPInternal();
   if (camIP == IPAddress()) {
     Serial.println("Camera command skipped: ESP32-CAM not found on this network.");
     Serial.println("Is the camera on the SAME network as the keypad?");
-    return;
+    return 0;
   }
 
   HTTPClient http;
@@ -1848,7 +1848,7 @@ void sendCameraCommandInternal(const char* command, const char* vaultId) {
 
   if (!http.begin(url)) {
     Serial.println("Camera HTTP begin failed");
-    return;
+    return -1;
   }
 
   int httpCode = http.GET();
@@ -1858,6 +1858,23 @@ void sendCameraCommandInternal(const char* command, const char* vaultId) {
   Serial.println(httpCode);
 
   http.end();
+  return httpCode;
+}
+
+void sendCameraCommandInternal(const char* command, const char* vaultId) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Camera command skipped: no WiFi");
+    return;
+  }
+
+  int httpCode = attemptCameraCommandOnce(command, vaultId, false);
+  if (httpCode == 200) return;
+
+  // Transient miss (camera mid-boot, stale mDNS cache, connection refused):
+  // resolve fresh and retry once before giving up - the fire-and-forget /
+  // start would otherwise lose the whole session's capture over one blip.
+  Serial.println("Camera command failed - retrying with fresh mDNS lookup");
+  attemptCameraCommandOnce(command, vaultId, true);
 }
 
 void sendEventInternal(const char* event, const char* vaultId) {
@@ -2139,6 +2156,11 @@ void handleResponse(int httpCode, const char* responseBody) {
 #endif
     // Start the delivery session on the server (opens deliveryInProgress).
     requestEventReport("session_start", selectedVault);
+    // Belt-and-braces: the vault-select camera start may have been lost (the
+    // cam could still have been booting). It is surely up by the time the OTP
+    // verifies, so re-issue /start to guarantee this session records. The cam
+    // treats a repeated /start as idempotent (same sessionId).
+    requestCameraCommand(OP_START_CAMERA, selectedVault);
     Serial.println("OTP Verified!");
   } else if (httpCode == 429) {
     lockoutUntilMs = millis() + LOCAL_LOCKOUT_MS;

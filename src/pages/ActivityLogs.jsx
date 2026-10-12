@@ -34,6 +34,35 @@ const DEVICE_EVENT_TEXT = {
   remote_collection_done: 'parcel collected, vault locked and ready',
 };
 
+// Which activity `action` values each filter button shows. Anything not listed
+// still appears under "All" (which applies no action filter), so no row can
+// become invisible. Keep in sync with the actions written by
+// api/device-verify-otp.js, api/device-event.js, api/vault-unlock.js,
+// functions/index.js, Dashboard.jsx and AuthContext.jsx.
+const FILTER_ACTIONS = {
+  Login: ['Login', 'Logout'],
+  OTP: ['OTP Generated', 'OTP Expired', 'Rate Limit Exceeded'],
+  Vault: [
+    'Vault Assigned',
+    'Vault Reset',
+    'Delivery Confirmed',
+    'Delivery Session Started',
+    'Vault Door Opened',
+    'Parcel Placed',
+    'Parcel Removed Before Lock',
+    'Delivery Locked In',
+    'Delivery Aborted - No Parcel Detected',
+    'Vault Auto-Locked',
+    'Vault Opened Remotely',
+    'Collection Complete',
+    'Remote Unlock Requested',
+    'Device OTP Verification Failed',
+    'Device Locked Out',
+    'OTP Verification Failed',
+    'OTP Verified',
+  ],
+};
+
 const humanizeLogDetails = (log) => {
   const details = log.details || '';
   const vault = log.vaultId != null ? `Vault ${log.vaultId} ` : '';
@@ -126,7 +155,7 @@ function ActivityLogs() {
     if (action === 'Vault Assigned') return '#3b82f6';
     if (action === 'OTP Generated') return '#f97316';
     if (action === 'Delivery Confirmed') return '#ef4444';
-    if (action === 'Device Locked Out') return '#ef4444';
+    if (action === 'Device Locked Out' || action === 'Device OTP Verification Failed') return '#ef4444';
     if (action === 'Vault Reset') return '#9ca3af';
     return '#9ca3af';
   };
@@ -140,15 +169,11 @@ function ActivityLogs() {
   const filterLogs = () => {
     let filtered = logs;
 
-    // Filter by action type
-    if (activeFilter === 'all') {
-      // No action filter
-    } else if (activeFilter === 'Login') {
-      filtered = filtered.filter(l => l.action === 'Login' || l.action === 'Logout');
-    } else if (activeFilter === 'Vault') {
-      filtered = filtered.filter(l => l.action === 'Vault Assigned' || l.action === 'Delivery Confirmed' || l.action === 'Vault Reset');
-    } else if (activeFilter === 'OTP') {
-      filtered = filtered.filter(l => l.action === 'OTP Generated' || l.action === 'OTP Expired');
+    // Filter by action type. "all" has no entry in FILTER_ACTIONS, so it
+    // applies no action filter (every row shows).
+    const actions = FILTER_ACTIONS[activeFilter];
+    if (actions) {
+      filtered = filtered.filter(l => actions.includes(l.action));
     }
 
     // Filter by date range

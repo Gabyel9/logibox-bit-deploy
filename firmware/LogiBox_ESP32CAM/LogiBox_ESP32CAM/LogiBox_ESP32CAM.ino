@@ -92,6 +92,21 @@ int lastHttpCode = 0;
 TaskHandle_t uploadTaskHandle = NULL;
 volatile bool uploadPending = false;
 
+// One TLS + HTTP keep-alive connection, reused for every frame upload.
+// Creating a fresh WiFiClientSecure per frame (every 3s) exhausts heap and
+// the radio, which shows up as "connection refused" on every upload.
+WiFiClientSecure secureClient;
+HTTPClient http;
+
+// Self-heal counters: N consecutive connect/upload failures, or a silent
+// upload stall while capturing, trigger an automatic reboot (the modem can
+// wedge under sustained capture+TLS load and stop answering mDNS).
+int consecutiveConnectFailures = 0;
+
+// Re-announce mDNS whenever WiFi reconnects, so the keypad rediscovers us
+// without a manual power cycle.
+bool mdnsAnnounced = true;
+
 // Delivery session state. Every frame uploaded during a session is tagged with
 // these so the web app can group them and label the session with a vault id.
 String sessionId = "";
@@ -154,6 +169,16 @@ void setup() {
 
   connectWiFi();
 
+  // One persistent TLS + HTTP keep-alive connection for all frame uploads.
+  secureClient.setInsecure();
+  http.setTimeout(5000);
+  http.setReuse(true);
+  // Content-Type is identical for every frame. It must be set once here:
+  // HTTPClient only discards its header list in end() - which is deliberately
+  // never called (keep-alive) - so addHeader() per frame would leak memory.
+  http.addHeader("Content-Type", "application/octet-stream");
+  lastUploadMs = millis();
+
   setupRoutes();
 
   // Background task handles capture + upload so the web server never blocks.
@@ -170,6 +195,39 @@ void setup() {
 
 void loop() {
   server.handleClient();
+
+  // WiFi recovery: the ESP32-CAM radio can drop its association mid-session
+  // under sustained capture + TLS load. Reconnect and re-announce mDNS so the
+  // keypad finds us again without a manual power cycle.
+  if (WiFi.status() != WL_CONNECTED) {
+    mdnsAnnounced = false;
+    static unsigned long lastReconnectAttempt = 0;
+    if (millis() - lastReconnectAttempt >= 10000UL) {
+      lastReconnectAttempt = millis();
+      Serial.println("WiFi lost - reconnecting");
+      WiFi.reconnect();
+    }
+  } else if (!mdnsAnnounced) {
+    mdnsAnnounced = true;
+    MDNS.begin(MDNS_HOSTNAME);
+    MDNS.addService("http", "tcp", 80);
+    Serial.println("mDNS re-announced after reconnect");
+  }
+
+  // Self-heal: a wedged upload task or a dead TLS path stalls all frames. If
+  // nothing uploads in ~60s, or the last 5 attempts all failed, reboot.
+  if (capturing) {
+    if (consecutiveConnectFailures >= 5) {
+      Serial.println("5 consecutive upload failures - rebooting camera");
+      delay(500);
+      ESP.restart();
+    }
+    if (millis() - lastUploadMs >= 60000UL) {
+      Serial.println("No successful upload in 60s - rebooting camera");
+      delay(500);
+      ESP.restart();
+    }
+  }
 
   if (capturing && millis() - lastCaptureTime >= CAPTURE_INTERVAL_MS) {
     lastCaptureTime = millis();
@@ -273,6 +331,7 @@ void connectWiFi() {
   Serial.println(WiFi.localIP());
 
   if (MDNS.begin(MDNS_HOSTNAME)) {
+    MDNS.addService("http", "tcp", 80);
     Serial.print("mDNS started: ");
     Serial.print(MDNS_HOSTNAME);
     Serial.println(".local");
@@ -345,6 +404,8 @@ void setupRoutes() {
     if (sessionId.length() == 0) {
       sessionId = "s" + String((uint32_t)millis());
       framesUploaded = 0;
+      consecutiveConnectFailures = 0;
+      lastUploadMs = millis();
     }
 
     String vault = server.arg("vault");
@@ -425,13 +486,6 @@ void captureAndUpload() {
 void uploadFrame(camera_fb_t* fb) {
   Serial.printf("Uploading frame: %u bytes\n", fb->len);
 
-  WiFiClientSecure client;
-  client.setInsecure(); // Skips certificate validation - fine for bench testing.
-                        // Pin Vercel's cert with setCACert() before real deployment.
-
-  HTTPClient http;
-  http.setTimeout(15000);
-
   String url = String(FUNCTION_URL) + "?deviceId=" + DEVICE_ID;
   if (sessionId.length() > 0) {
     url += "&sessionId=" + sessionId;
@@ -440,31 +494,34 @@ void uploadFrame(camera_fb_t* fb) {
     url += "&vaultId=" + currentVaultId;
   }
 
-  if (!http.begin(client, url)) {
-    Serial.println("HTTP begin failed");
+  // Reuses the persistent secureClient + http handle (keep-alive). begin()
+  // transparently reconnects if the server dropped the previous connection.
+  // Never call http.end() here: that tears down the TLS socket and we would be
+  // back to a fresh handshake - and fresh heap churn - every single frame.
+  if (!http.begin(secureClient, url)) {
+    consecutiveConnectFailures++;
+    Serial.print("TLS connect failed (");
+    Serial.print(consecutiveConnectFailures);
+    Serial.println(" consecutive) - skipping frame");
     return;
   }
-
-  http.addHeader("Content-Type", "application/octet-stream");
 
   int httpCode = http.POST(fb->buf, fb->len);
   lastHttpCode = httpCode;
 
-  if (httpCode > 0) {
-    if (httpCode == 200) {
-      framesUploaded++;
-      lastUploadMs = millis();
-      Serial.print("Upload OK (");
-      Serial.print(framesUploaded);
-      Serial.println(" frames)");
-    } else {
-      Serial.print("Upload failed, HTTP ");
-      Serial.println(httpCode);
-    }
+  if (httpCode == 200) {
+    consecutiveConnectFailures = 0;
+    framesUploaded++;
+    lastUploadMs = millis();
+    Serial.print("Upload OK (");
+    Serial.print(framesUploaded);
+    Serial.println(" frames)");
+  } else if (httpCode > 0) {
+    Serial.print("Upload failed, HTTP ");
+    Serial.println(httpCode);
   } else {
+    consecutiveConnectFailures++;
     Serial.print("Upload error: ");
     Serial.println(http.errorToString(httpCode));
   }
-
-  http.end();
 }
