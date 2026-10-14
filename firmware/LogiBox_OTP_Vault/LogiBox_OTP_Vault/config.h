@@ -30,6 +30,11 @@
 // ─── Camera (mDNS) ───
 #define CAMERA_MDNS_HOST  "logiboxcam"
 #define CAMERA_PORT       80
+// Fallback IP used when mDNS resolution of CAMERA_MDNS_HOST fails (many routers
+// don't forward client-to-client multicast/mDNS). Matches the camera's DHCP
+// reservation. mDNS is still tried first, so this self-corrects if the camera
+// ever changes IP.
+#define CAMERA_FALLBACK_IP  "192.168.50.11"
 
 // How long the "Cam OK / Cam not found / No WiFi / No response" camera-check
 // result stays on the LCD before returning to WELCOME (any key skips sooner).

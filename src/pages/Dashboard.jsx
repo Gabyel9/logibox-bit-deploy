@@ -113,6 +113,7 @@ function Dashboard() {
     contactNumber: '',
     parcelInfo: '',
     deliveryFee: '',
+    prepaid: false,
   });
   const [formErrors, setFormErrors] = useState({});
   const [vaults, setVaults] = useState([]);
@@ -466,7 +467,7 @@ function Dashboard() {
 
   const openSetDeliveryModal = (vault) => {
     setSelectedVault(vault);
-    setDeliveryForm({ receiverName: '', contactNumber: '', parcelInfo: '', deliveryFee: '' });
+    setDeliveryForm({ receiverName: '', contactNumber: '', parcelInfo: '', deliveryFee: '', prepaid: false });
     setFormErrors({});
     setShowSetDeliveryModal(true);
   };
@@ -492,12 +493,14 @@ function Dashboard() {
       errors.parcelInfo = 'Parcel info is required';
     }
 
-    if (!deliveryForm.deliveryFee) {
-      errors.deliveryFee = 'Delivery fee is required';
-    } else if (!/^\d+$/.test(deliveryForm.deliveryFee)) {
-      errors.deliveryFee = 'Numbers only';
-    } else if (parseFloat(deliveryForm.deliveryFee) <= 0) {
-      errors.deliveryFee = 'Must be greater than 0';
+    if (!deliveryForm.prepaid) {
+      if (!deliveryForm.deliveryFee) {
+        errors.deliveryFee = 'Delivery fee is required';
+      } else if (!/^\d+$/.test(deliveryForm.deliveryFee)) {
+        errors.deliveryFee = 'Numbers only';
+      } else if (parseFloat(deliveryForm.deliveryFee) <= 0) {
+        errors.deliveryFee = 'Must be greater than 0';
+      }
     }
 
     if (Object.keys(errors).length > 0) {
@@ -523,7 +526,7 @@ function Dashboard() {
       receiverName: deliveryForm.receiverName.trim(),
       contactNumber: deliveryForm.contactNumber,
       parcelInfo: deliveryForm.parcelInfo.trim(),
-      deliveryFee: parseFloat(deliveryForm.deliveryFee),
+      deliveryFee: deliveryForm.prepaid ? 0 : parseFloat(deliveryForm.deliveryFee),
       createdAt: new Date().toISOString(),
     });
 
@@ -531,11 +534,11 @@ function Dashboard() {
     await logActivity('Vault Assigned', `Delivery assigned to ${deliveryForm.receiverName} for vault ${selectedVault.id}`, selectedVault.id);
     setFormErrors({});
     setShowConfirmModal(false);
-    setDeliveryForm({ receiverName: '', contactNumber: '', parcelInfo: '', deliveryFee: '' });
+    setDeliveryForm({ receiverName: '', contactNumber: '', parcelInfo: '', deliveryFee: '', prepaid: false });
   };
 
   const handleModalReset = () => {
-    setDeliveryForm({ receiverName: '', contactNumber: '', parcelInfo: '', deliveryFee: '' });
+    setDeliveryForm({ receiverName: '', contactNumber: '', parcelInfo: '', deliveryFee: '', prepaid: false });
     setFormErrors({});
   };
 
@@ -887,7 +890,7 @@ function Dashboard() {
                                 { label: 'Delivery Rider', value: stripHtml(vault.receiverName) },
                                 { label: 'Contact', value: stripHtml(vault.contactNumber) },
                                 { label: 'Parcel', value: stripHtml(vault.parcelInfo) },
-                                { label: 'Fee', value: `₱${vault.deliveryFee}` },
+                                { label: 'Fee', value: (vault.deliveryFee === 0 || vault.deliveryFee == null) ? 'Prepaid' : `₱${vault.deliveryFee}` },
                               ].map((item, i) => (
                                 <div key={i} style={styles.detailItem}>
                                   <div style={styles.detailItemLabel}>{item.label}</div>
@@ -1116,7 +1119,7 @@ function Dashboard() {
                 { label: 'Contact Number', key: 'contactNumber', placeholder: 'Enter contact number', numeric: true },
                 { label: 'Parcel Info', key: 'parcelInfo', placeholder: 'Enter parcel description' },
                 { label: 'Delivery Fee (₱)', key: 'deliveryFee', placeholder: '0.00', numeric: true },
-              ].map((field, i) => (
+              ].filter(field => !(deliveryForm.prepaid && field.key === 'deliveryFee')).map((field, i) => (
                 <div key={i} style={styles.formGroup}>
                   <label style={styles.formLabel}>{field.label}</label>
                   <input
@@ -1135,6 +1138,20 @@ function Dashboard() {
                   )}
                 </div>
               ))}
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 0', cursor: 'pointer', userSelect: 'none' }}>
+                <input
+                  type="checkbox"
+                  checked={deliveryForm.prepaid}
+                  onChange={e => {
+                    const checked = e.target.checked;
+                    setDeliveryForm(prev => ({ ...prev, prepaid: checked, deliveryFee: checked ? '' : prev.deliveryFee }));
+                    setFormErrors(prev => ({ ...prev, deliveryFee: undefined }));
+                  }}
+                  style={{ width: 18, height: 18, accentColor: '#8B0000', flexShrink: 0 }}
+                />
+                <span style={{ fontSize: '0.875rem', color: '#374151', fontWeight: 600 }}>Prepaid — no cash to collect</span>
+              </label>
+              {!deliveryForm.prepaid && (
               <div style={{
                 backgroundColor: '#fffbeb',
                 border: '1px solid #fde68a',
@@ -1154,6 +1171,7 @@ function Dashboard() {
                   Please don't forget to <span style={{ color: '#8B0000', fontWeight: 700 }}>deposit the payment</span> in the cash pod compartment of the selected vault.
                 </span>
               </div>
+              )}
             </div>
             <div style={{
               display: 'flex',
@@ -1194,7 +1212,7 @@ function Dashboard() {
                   { label: 'Contact Number', key: 'contactNumber', placeholder: 'Enter contact number', numeric: true },
                   { label: 'Parcel Info', key: 'parcelInfo', placeholder: 'Enter parcel description' },
                   { label: 'Delivery Fee (₱)', key: 'deliveryFee', placeholder: '0.00', numeric: true },
-                ].map((field, i) => (
+                ].filter(field => !(deliveryForm.prepaid && field.key === 'deliveryFee')).map((field, i) => (
                   <div key={i} style={styles.formGroup}>
                     <label style={styles.formLabel}>{field.label}</label>
                     <input
@@ -1213,6 +1231,20 @@ function Dashboard() {
                     )}
                   </div>
                 ))}
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 0', cursor: 'pointer', userSelect: 'none' }}>
+                  <input
+                    type="checkbox"
+                    checked={deliveryForm.prepaid}
+                    onChange={e => {
+                      const checked = e.target.checked;
+                      setDeliveryForm(prev => ({ ...prev, prepaid: checked, deliveryFee: checked ? '' : prev.deliveryFee }));
+                      setFormErrors(prev => ({ ...prev, deliveryFee: undefined }));
+                    }}
+                    style={{ width: 18, height: 18, accentColor: '#8B0000', flexShrink: 0 }}
+                  />
+                  <span style={{ fontSize: '0.875rem', color: '#374151', fontWeight: 600 }}>Prepaid — no cash to collect</span>
+                </label>
+                {!deliveryForm.prepaid && (
                 <div style={{
                   backgroundColor: '#fffbeb',
                   border: '1px solid #fde68a',
@@ -1232,6 +1264,7 @@ function Dashboard() {
                     Please don't forget to <span style={{ color: '#8B0000', fontWeight: 700 }}>deposit the payment</span> in the cash pod compartment of the selected vault.
                   </span>
                 </div>
+                )}
               </div>
               <div style={r.modalFooter}>
                 <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44 }} onClick={() => { setFormErrors({}); setShowSetDeliveryModal(false); }}>
@@ -1289,7 +1322,7 @@ function Dashboard() {
                   </div>
                   <div>
                     <div style={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Delivery Fee</div>
-                    <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#0f172a' }}>₱{deliveryForm.deliveryFee}</div>
+                    <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#0f172a' }}>{deliveryForm.prepaid ? 'Prepaid' : `₱${deliveryForm.deliveryFee}`}</div>
                   </div>
                 </div>
               </div>
@@ -1310,6 +1343,7 @@ function Dashboard() {
                   Vault will be set to <span style={{ color: '#8B0000', fontWeight: 700 }}>Assigned</span> after assignment. <span style={{ color: '#8B0000', fontWeight: 700 }}>OTP</span> can then be generated for the delivery rider.
                 </span>
               </div>
+              {!deliveryForm.prepaid && (
               <div style={{
                 backgroundColor: '#fffbeb',
                 border: '1px solid #fde68a',
@@ -1328,6 +1362,7 @@ function Dashboard() {
                   Please don't forget to <span style={{ color: '#8B0000', fontWeight: 700 }}>take a photo of the cash</span> placed inside the cash pod and <span style={{ color: '#8B0000', fontWeight: 700 }}>send the proof</span> to the designated delivery rider.
                 </span>
               </div>
+              )}
             </div>
             <div style={{
               display: 'flex',
@@ -1385,7 +1420,7 @@ function Dashboard() {
                     </div>
                     <div>
                       <div style={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Delivery Fee</div>
-                      <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#0f172a' }}>₱{deliveryForm.deliveryFee}</div>
+                      <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#0f172a' }}>{deliveryForm.prepaid ? 'Prepaid' : `₱${deliveryForm.deliveryFee}`}</div>
                     </div>
                   </div>
                 </div>
@@ -1406,6 +1441,7 @@ function Dashboard() {
                     Vault will be set to <span style={{ color: '#8B0000', fontWeight: 700 }}>Assigned</span> after assignment. <span style={{ color: '#8B0000', fontWeight: 700 }}>OTP</span> can then be generated for the delivery rider.
                   </span>
                 </div>
+                {!deliveryForm.prepaid && (
                 <div style={{
                   backgroundColor: '#fffbeb',
                   border: '1px solid #fde68a',
@@ -1424,6 +1460,7 @@ function Dashboard() {
                     Please don't forget to <span style={{ color: '#8B0000', fontWeight: 700 }}>take a photo of the cash</span> placed inside the cash pod and <span style={{ color: '#8B0000', fontWeight: 700 }}>send the proof</span> to the designated delivery rider.
                   </span>
                 </div>
+                )}
               </div>
               <div style={r.modalFooter}>
                 <button className="btn-animate" style={{ ...styles.cancelBtn, minHeight: 44 }} onClick={() => { setShowConfirmModal(false); setShowSetDeliveryModal(true); }}>

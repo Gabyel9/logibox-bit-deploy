@@ -2004,10 +2004,25 @@ IPAddress resolveCameraIPInternal() {
     Serial.print(CAMERA_MDNS_HOST);
     Serial.print(" -> ");
     Serial.println(ip.toString());
-  } else {
-    camIpValid = false;
-    Serial.println("mDNS lookup failed - camera not found");
+    return ip;
   }
+
+  // mDNS failed (some routers don't forward client-to-client multicast).
+  // Fall back to the camera's reserved static IP so the LAN control path keeps
+  // working. The next cache expiry retries mDNS first, so this self-corrects if
+  // the camera ever changes address.
+  IPAddress fallback;
+  if (fallback.fromString(CAMERA_FALLBACK_IP)) {
+    cachedCamIP = fallback;
+    camIpCachedAt = millis();
+    camIpValid = true;
+    Serial.print("mDNS lookup failed - using fallback camera IP ");
+    Serial.println(cachedCamIP.toString());
+    return cachedCamIP;
+  }
+
+  camIpValid = false;
+  Serial.println("mDNS lookup failed - camera not found");
   return ip;
 }
 

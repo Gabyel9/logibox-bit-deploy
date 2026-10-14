@@ -329,6 +329,8 @@ void connectWiFi() {
   Serial.println(WiFi.SSID());
   Serial.print("IP Address: ");
   Serial.println(WiFi.localIP());
+  Serial.print("MAC Address: ");
+  Serial.println(WiFi.macAddress());
 
   if (MDNS.begin(MDNS_HOSTNAME)) {
     MDNS.addService("http", "tcp", 80);
